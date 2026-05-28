@@ -94,6 +94,32 @@
     high: "高"
   };
 
+  const ENUM_TEXT_REPLACEMENTS = {
+    reply_message: "回复消息",
+    send_message: "发送消息",
+    send_email: "发送邮件",
+    reminder: "提醒事项",
+    create_todo: "创建待办",
+    schedule_task: "定时任务",
+    user: "用户",
+    group: "群组",
+    email: "邮箱",
+    dynamic: "动态对象",
+    self: "本人",
+    unknown: "未识别",
+    none: "无需定时",
+    once: "一次性任务",
+    recurring: "周期任务",
+    low: "低",
+    normal: "普通",
+    high: "高",
+    WAITING_CONFIRM: "等待确认",
+    CONFIRMED: "已确认",
+    EXECUTED: "已执行",
+    SCHEDULED: "已调度",
+    FAILED: "执行失败"
+  };
+
   document.querySelector("#previewBtn").addEventListener("click", preview);
   confirmBtn.addEventListener("click", confirmPlan);
 
@@ -130,15 +156,15 @@
       <div class="task">
         <h2>${escapeHtml(task.title)}</h2>
         <div class="meta">
-          <div class="label">动作类型</div><div class="value"><span class="tag">${formatActionType(task.actionType)}</span></div>
-          <div class="label">对象</div><div class="value">${escapeHtml(task.target?.name || task.target?.address || "未指定")}</div>
-          <div class="label">对象类型</div><div class="value">${formatTargetType(task.target?.targetType)}</div>
-          <div class="label">计划类型</div><div class="value">${formatScheduleType(task.schedule?.scheduleType)}</div>
+          <div class="label">动作类型</div><div class="value"><span class="tag">${formatActionType(readField(task, "actionType", "action_type"))}</span></div>
+          <div class="label">对象</div><div class="value">${escapeHtml(readTargetName(task.target))}</div>
+          <div class="label">对象类型</div><div class="value">${formatTargetType(readField(task.target, "targetType", "target_type"))}</div>
+          <div class="label">计划类型</div><div class="value">${formatScheduleType(readField(task.schedule, "scheduleType", "schedule_type"))}</div>
           <div class="label">计划时间</div><div class="value">${formatScheduleText(task.schedule)}</div>
           ${renderCron(task.schedule)}
-          <div class="label">优先级</div><div class="value">${formatPriority(task.priority)}</div>
+          <div class="label">优先级</div><div class="value">${formatPriority(readField(task, "priority"))}</div>
           <div class="label">置信度</div><div class="value">${formatConfidence(task.confidence)}</div>
-          <div class="label">状态</div><div class="value">${formatStatusTag(task.status)}</div>
+          <div class="label">状态</div><div class="value">${formatStatusTag(readField(task, "status"))}</div>
           <div class="label">内容</div><div class="value">${escapeHtml(task.content || "")}</div>
           <div class="label">解析备注</div><div class="value">${escapeHtml(task.analysisNote || "")}</div>
           <div class="label">说明</div><div class="value">${formatExecutionNote(task.executionNote || "")}</div>
@@ -150,45 +176,51 @@
   }
 
   function renderCron(schedule) {
-    if (!schedule || !schedule.cron) return "";
+    if (!shouldShowCron(schedule)) return "";
+    const cron = readField(schedule, "cron");
     return `
-      <div class="label">调度表达式</div>
-      <div class="value"><span class="expression">${escapeHtml(schedule.cron)}</span></div>
+      <div class="label">Cron 表达式</div>
+      <div class="value">${cron ? `<span class="expression">${escapeHtml(cron)}</span>` : "未生成"}</div>
     `;
   }
 
   function formatActionType(value) {
-    return ACTION_TYPE_TEXT[value] || "未知动作";
+    return ACTION_TYPE_TEXT[normalizeEnum(value)] || "未知动作";
   }
 
   function formatTargetType(value) {
-    return TARGET_TYPE_TEXT[value] || "未识别";
+    return TARGET_TYPE_TEXT[normalizeEnum(value)] || "未识别";
   }
 
   function formatStatus(value) {
-    return STATUS_TEXT[value] || "未知状态";
+    return STATUS_TEXT[normalizeStatus(value)] || "未知状态";
   }
 
   function formatStatusTag(value) {
     const text = formatStatus(value);
+    const status = normalizeStatus(value);
     let className = "tag";
-    if (value === "EXECUTED" || value === "CONFIRMED") className += " success";
-    if (value === "SCHEDULED" || value === "WAITING_CONFIRM") className += " warn";
-    if (value === "FAILED") className += " danger";
+    if (status === "EXECUTED" || status === "CONFIRMED") className += " success";
+    if (status === "SCHEDULED" || status === "WAITING_CONFIRM") className += " warn";
+    if (status === "FAILED") className += " danger";
     return `<span class="${className}">${text}</span>`;
   }
 
   function formatScheduleType(value) {
-    return SCHEDULE_TYPE_TEXT[value] || "无需定时";
+    return SCHEDULE_TYPE_TEXT[normalizeEnum(value)] || "无需定时";
   }
 
   function formatScheduleText(schedule) {
     if (!schedule) return "立即执行或等待人工确认";
     const parts = [];
-    if (schedule.originalText) parts.push(schedule.originalText);
-    if (schedule.runAt) parts.push(`执行时间：${formatDateTime(schedule.runAt)}`);
-    if (schedule.nextRunAt) parts.push(`下次触发：${formatDateTime(schedule.nextRunAt)}`);
-    if (schedule.lastRunAt) parts.push(`上次触发：${formatDateTime(schedule.lastRunAt)}`);
+    const originalText = readField(schedule, "originalText", "original_text");
+    const runAt = readField(schedule, "runAt", "run_at");
+    const nextRunAt = readField(schedule, "nextRunAt", "next_run_at");
+    const lastRunAt = readField(schedule, "lastRunAt", "last_run_at");
+    if (originalText) parts.push(originalText);
+    if (runAt) parts.push(`执行时间：${formatDateTime(runAt)}`);
+    if (nextRunAt) parts.push(`下次触发：${formatDateTime(nextRunAt)}`);
+    if (lastRunAt) parts.push(`上次触发：${formatDateTime(lastRunAt)}`);
     return escapeHtml(parts.join("；") || "立即执行或等待人工确认");
   }
 
@@ -201,12 +233,47 @@
       .replaceAll("SCHEDULED", "已调度")
       .replaceAll("FAILED", "执行失败")
       .replaceAll("nextRunAt=", "下次触发时间：")
-      .replaceAll("cron=", "调度表达式：");
-    return escapeHtml(text);
+      .replaceAll("cron=", "Cron 表达式：");
+    return escapeHtml(replaceEnumText(text));
   }
 
   function formatPriority(value) {
-    return PRIORITY_TEXT[value] || "普通";
+    return PRIORITY_TEXT[normalizeEnum(value)] || "普通";
+  }
+
+  function shouldShowCron(schedule) {
+    if (!schedule) return false;
+    const scheduleType = normalizeEnum(readField(schedule, "scheduleType", "schedule_type"));
+    return Boolean(readField(schedule, "cron")) || scheduleType === "recurring";
+  }
+
+  function readTargetName(target) {
+    return readField(target, "name", "address") || "未指定";
+  }
+
+  function readField(obj, ...keys) {
+    if (!obj) return "";
+    for (const key of keys) {
+      if (obj[key] !== undefined && obj[key] !== null && obj[key] !== "") {
+        return obj[key];
+      }
+    }
+    return "";
+  }
+
+  function normalizeEnum(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function normalizeStatus(value) {
+    return String(value || "").trim().toUpperCase();
+  }
+
+  function replaceEnumText(value) {
+    return Object.entries(ENUM_TEXT_REPLACEMENTS).reduce(
+      (text, [raw, translated]) => text.replaceAll(raw, translated),
+      value
+    );
   }
 
   function escapeHtml(value) {
