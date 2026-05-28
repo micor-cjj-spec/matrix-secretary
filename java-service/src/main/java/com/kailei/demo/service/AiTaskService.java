@@ -8,6 +8,8 @@ import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.model.TaskStatus;
 import com.kailei.demo.repository.TaskPlanRepository;
+import com.kailei.demo.skill.SkillCatalog;
+import com.kailei.demo.skill.SkillDefinition;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
@@ -21,13 +23,16 @@ public class AiTaskService {
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
     private final TaskExecutionService executionService;
+    private final SkillCatalog skillCatalog;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
-                         TaskExecutionService executionService) {
+                         TaskExecutionService executionService,
+                         SkillCatalog skillCatalog) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
+        this.skillCatalog = skillCatalog;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
@@ -44,21 +49,7 @@ public class AiTaskService {
         );
 
         List<TaskAction> actions = parsed.tasks().stream()
-                .map(item -> new TaskAction(
-                        item.actionId(),
-                        item.actionType(),
-                        item.title(),
-                        item.content(),
-                        item.target(),
-                        item.schedule(),
-                        item.priority(),
-                        item.confidence(),
-                        item.requiresConfirmation(),
-                        item.sourceSentence(),
-                        item.analysisNote(),
-                        TaskStatus.WAITING_CONFIRM,
-                        "等待用户确认"
-                ))
+                .map(this::toTaskAction)
                 .toList();
 
         TaskPlan plan = new TaskPlan(
@@ -73,6 +64,33 @@ public class AiTaskService {
                 OffsetDateTime.now()
         );
         return repository.save(plan);
+    }
+
+    private TaskAction toTaskAction(PythonSemanticClient.PythonTaskAction item) {
+        SkillDefinition skill = item.skillName() != null && !item.skillName().isBlank()
+                ? skillCatalog.findByName(item.skillName()).orElseGet(() -> skillCatalog.getOrUnknown(item.actionType()))
+                : skillCatalog.getOrUnknown(item.actionType());
+        boolean requiresConfirmation = Boolean.TRUE.equals(item.requiresConfirmation())
+                || Boolean.TRUE.equals(skill.requiresConfirmation())
+                || "HIGH".equalsIgnoreCase(skill.riskLevel());
+        return new TaskAction(
+                item.actionId(),
+                item.actionType(),
+                skill.name(),
+                item.title(),
+                item.content(),
+                item.target(),
+                item.schedule(),
+                item.args(),
+                item.priority(),
+                skill.riskLevel(),
+                item.confidence(),
+                requiresConfirmation,
+                item.sourceSentence(),
+                item.analysisNote(),
+                TaskStatus.WAITING_CONFIRM,
+                "等待用户确认"
+        );
     }
 
     public ConfirmTaskResponse confirm(String planId) {
