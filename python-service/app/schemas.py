@@ -4,6 +4,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+class ActionType(str, Enum):
+    REPLY_MESSAGE = "reply_message"
+    SEND_MESSAGE = "send_message"
+    SEND_EMAIL = "send_email"
+    REMINDER = "reminder"
+    CREATE_TODO = "create_todo"
+    SCHEDULE_TASK = "schedule_task"
+
+
 class ScheduleType(str, Enum):
     NONE = "none"
     ONCE = "once"
