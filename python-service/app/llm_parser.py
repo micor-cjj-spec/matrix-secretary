@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from app.schemas import ParseResponse
 from app.settings import get_settings
+from app.skill_client import render_skill_prompt
 
 
 CN_TZ = timezone(timedelta(hours=8))
@@ -25,7 +26,8 @@ JSON 必须符合以下结构：
   "tasks": [
     {
       "action_id": "act-xxxxxxxx",
-      "action_type": "reply_message | send_message | send_email | reminder | create_todo | schedule_task",
+      "action_type": "必须来自可用 Skills 里的 actionType",
+      "skill_name": "必须来自可用 Skills 里的 name",
       "title": "简短任务标题",
       "content": "任务正文、邮件正文、消息正文或提醒内容",
       "target": {
@@ -40,6 +42,7 @@ JSON 必须符合以下结构：
         "cron": "Quartz cron，例如 0 0 10 ? * FRI，没有则 null",
         "timezone": "Asia/Shanghai"
       },
+      "args": {},
       "priority": "low | normal | high",
       "confidence": 0.0,
       "requires_confirmation": true,
@@ -50,13 +53,17 @@ JSON 必须符合以下结构：
   "warnings": []
 }
 
+{skills_prompt}
+
 关键规则：
 1. 一句话里有多个动作时必须拆成多个 tasks。
-2. 发邮件、发消息、回复消息必须 requires_confirmation=true。
-3. 没有明确时间的任务 schedule_type=none。
-4. 一次性时间用 run_at，周期时间用 cron。
-5. 不确定的对象 target_type=unknown，并把问题写入 warnings。
-6. 当前日期是 {current_date}，时区是 Asia/Shanghai。
+2. action_type 必须选择当前可用 Skills 中最匹配的 actionType；skill_name 必须填写对应 Skill 的 name。
+3. 发送、回复、对外通知类任务必须 requires_confirmation=true；如果 Skill 的 requiresConfirmation=true，也必须返回 true。
+4. 没有明确时间的任务 schedule_type=none。
+5. 一次性时间用 run_at，周期时间用 cron。
+6. 不确定的对象 target_type=unknown，并把问题写入 warnings。
+7. 当前日期是 {current_date}，用户时区是 {timezone_name}。
+8. 如果 Skill 的 inputSchema 中出现额外业务参数，请放入 args，例如 location、date、file_path、subject 等。
 
 对象和内容边界规则，必须严格遵守：
 1. target.name 只能是人名、群名、邮箱名、组织名，不能包含动作或任务内容。
@@ -74,16 +81,16 @@ JSON 必须符合以下结构：
 
 示例：
 输入：明天下午三点提醒我给李雷确认合同盖章
-输出任务：action_type=reminder, target.name=李雷, content=确认合同盖章, schedule.original_text=明天下午三点
+输出任务：skill_name=reminder, action_type=reminder, target.name=李雷, content=确认合同盖章, schedule.original_text=明天下午三点
 
 输入：下周一上午九点提醒我整理本月项目进度
-输出任务：action_type=reminder, target.target_type=unknown, target.name=null, content=整理本月项目进度
+输出任务：skill_name=reminder, action_type=reminder, target.target_type=unknown, target.name=null, content=整理本月项目进度
 
 输入：如果系统里还有状态停留在“处理中”超过三十分钟的单据，就提醒我联系李雷一起排查
-输出任务：action_type=reminder, target.name=李雷, content=联系李雷一起排查，不要直接重跑任务
+输出任务：skill_name=reminder, action_type=reminder, target.name=李雷, content=联系李雷一起排查，不要直接重跑任务
 
 输入：如果有人到下午三点还没提交周报，再单独提醒他一次
-输出任务：action_type=reminder, target.target_type=dynamic, target.name=未提交周报的人, content=如果有人到下午三点还没提交周报，再单独提醒一次
+输出任务：skill_name=reminder, action_type=reminder, target.target_type=dynamic, target.name=未提交周报的人, content=如果有人到下午三点还没提交周报，再单独提醒一次
 """
 
 
@@ -157,4 +164,9 @@ async def parse_text_with_llm_with_diagnostics(
 
 def build_system_prompt(timezone_name: str) -> str:
     current_date = datetime.now(CN_TZ).date().isoformat()
-    return SYSTEM_PROMPT.replace("{current_date}", current_date)
+    return (
+        SYSTEM_PROMPT
+        .replace("{current_date}", current_date)
+        .replace("{timezone_name}", timezone_name)
+        .replace("{skills_prompt}", render_skill_prompt())
+    )
