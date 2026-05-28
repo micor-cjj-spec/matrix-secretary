@@ -31,6 +31,9 @@ class TaskSchedule(BaseModel):
     run_at: str | None = None
     cron: str | None = None
     timezone: str = "Asia/Shanghai"
+    next_run_at: str | None = None
+    last_run_at: str | None = None
+    trigger_count: int = 0
 
 
 class TaskAction(BaseModel):
