@@ -1,0 +1,29 @@
+name: send_email
+displayName: 发送邮件
+description: 用户要求发送、起草、转发邮件时使用。
+triggerKeywords:
+  - 发邮件
+  - 发送邮件
+  - 邮件发给
+  - 起草邮件
+actionType: send_email
+riskLevel: HIGH
+requiresConfirmation: true
+inputSchema:
+  type: object
+  required:
+    - content
+    - target
+  properties:
+    content:
+      type: string
+      description: 邮件正文
+    subject:
+      type: string
+      description: 邮件主题
+    target:
+      type: object
+      description: 收件人信息
+execution:
+  type: builtin
+  executor: email
