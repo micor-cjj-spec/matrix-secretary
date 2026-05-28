@@ -159,6 +159,70 @@ GET  http://127.0.0.1:10002/api/ai-task/{planId}
 GET  http://127.0.0.1:10002/api/ai-task
 ```
 
+## 启动 Docker 基础设施和 XXL-JOB
+
+项目提供了一个本地 `docker-compose.yml`，用于启动 MySQL 和 XXL-JOB Admin：
+
+```powershell
+cd D:\workspace\demo
+docker compose up -d mysql xxl-job-admin
+```
+
+服务地址：
+
+```text
+MySQL:        127.0.0.1:3307
+XXL-JOB UI:  http://127.0.0.1:8080/xxl-job-admin
+账号:        admin
+密码:        123456
+```
+
+Docker 首次启动 MySQL 时会自动初始化：
+
+- `ai_secretary_demo`：Java demo 业务库。
+- `xxl_job`：XXL-JOB Admin 元数据库。
+- `ai-secretary-demo-executor` 执行器分组。
+- `aiSecretaryDispatchDueTasks` 调度任务，默认每 10 秒触发一次。
+
+如果已经存在旧的 MySQL volume，初始化 SQL 不会重复执行；需要重建时可以先确认数据可丢弃，再执行：
+
+```powershell
+docker compose down -v
+docker compose up -d mysql xxl-job-admin
+```
+
+如果 Java 也要连接 Docker 里的 MySQL，启动 Java 前把数据库地址指到 `3307`：
+
+```powershell
+$env:MYSQL_URL="jdbc:mysql://127.0.0.1:3307/ai_secretary_demo?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true"
+$env:MYSQL_USERNAME="ai_demo"
+$env:MYSQL_PASSWORD="ai_demo_123"
+```
+
+### 使用 XXL-JOB 触发调度
+
+Java 默认仍启用本地 `@Scheduled` 扫描器，方便不启动 XXL-JOB 时也能跑通 demo。要切换为 XXL-JOB 触发，启动 Java 前设置：
+
+```powershell
+$env:AI_SECRETARY_LOCAL_SCHEDULER_ENABLED="false"
+$env:XXL_JOB_ENABLED="true"
+$env:XXL_JOB_ADMIN_ADDRESSES="http://127.0.0.1:8080/xxl-job-admin"
+$env:XXL_JOB_ACCESS_TOKEN="default_token"
+$env:XXL_JOB_EXECUTOR_APPNAME="ai-secretary-demo-executor"
+$env:XXL_JOB_EXECUTOR_ADDRESS="http://host.docker.internal:10003"
+$env:XXL_JOB_EXECUTOR_PORT="10003"
+
+cd D:\workspace\demo\java-service
+mvn spring-boot:run
+```
+
+说明：
+
+- `XXL_JOB_EXECUTOR_ADDRESS` 是 XXL-JOB Admin 回调 Java 执行器的地址。Admin 跑在 Docker 容器里、Java 跑在 Windows 主机上时，推荐使用 `http://host.docker.internal:10003`。
+- 如果 XXL-JOB Admin 和 Java 都在宿主机直接运行，可以改成 `http://127.0.0.1:10003`。
+- XXL-JOB JobHandler 名称为 `aiSecretaryDispatchDueTasks`，内部复用 Java 现有 `dispatchDueOnceTasks()` 逻辑。
+- 本地 `@Scheduled` 和 XXL-JOB 不建议同时开启，否则可能重复扫描到期任务。
+
 ## 示例请求
 
 ```http
@@ -218,7 +282,8 @@ WAITING_CONFIRM
 
 - 一次性任务：`schedule_type=once`，同时保留 `run_at`、`cron`、`next_run_at`。
 - 周期任务：`schedule_type=recurring`，必须保留 `cron`，Java 服务会计算并维护 `next_run_at`、`last_run_at`、`trigger_count`。
-- Java `@Scheduled` 每 10 秒扫描一次已确认的调度任务；周期任务执行成功后重新进入 `SCHEDULED` 并推进下一次触发时间。
+- Java 本地 `@Scheduled` 默认每 10 秒扫描一次已确认的调度任务；也可以关闭本地扫描，改由 XXL-JOB 每 10 秒触发 `aiSecretaryDispatchDueTasks`。
+- 周期任务执行成功后重新进入 `SCHEDULED` 并推进下一次触发时间。
 - 当前执行器仍是模拟执行，正式项目可替换为真实邮件、WebSocket、企业微信、飞书、钉钉等执行器。
 
 ## 后续演进
