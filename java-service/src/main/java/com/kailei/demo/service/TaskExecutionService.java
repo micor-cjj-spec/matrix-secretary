@@ -2,6 +2,7 @@ package com.kailei.demo.service;
 
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskStatus;
+import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.skill.GenericSkillExecutor;
 import com.kailei.demo.skill.SkillCatalog;
 import com.kailei.demo.skill.SkillDefinition;
@@ -16,23 +17,38 @@ public class TaskExecutionService {
 
     private final SkillCatalog skillCatalog;
     private final GenericSkillExecutor genericSkillExecutor;
+    private final TaskExecutionLogRepository executionLogRepository;
+    private final CronScheduleService cronScheduleService;
 
-    public TaskExecutionService(SkillCatalog skillCatalog, GenericSkillExecutor genericSkillExecutor) {
+    public TaskExecutionService(SkillCatalog skillCatalog,
+                                GenericSkillExecutor genericSkillExecutor,
+                                TaskExecutionLogRepository executionLogRepository,
+                                CronScheduleService cronScheduleService) {
         this.skillCatalog = skillCatalog;
         this.genericSkillExecutor = genericSkillExecutor;
+        this.executionLogRepository = executionLogRepository;
+        this.cronScheduleService = cronScheduleService;
     }
 
-    public TaskAction confirmAction(TaskAction action) {
+    public TaskAction confirmAction(String planId, TaskAction action, String operatorUserId) {
+        TaskAction next;
         if (action.schedule() != null && action.schedule().isScheduled()) {
-            String note = "已进入调度队列: " + (action.schedule().runAt() != null ? action.schedule().runAt() : action.schedule().cron());
+            TaskAction scheduledAction = action.withSchedule(cronScheduleService.ensureCronAndNextRun(action.schedule()));
+            String note = "已进入调度队列: cron=" + scheduledAction.schedule().cron()
+                    + ", nextRunAt=" + scheduledAction.schedule().effectiveRunAt();
             log.info("Schedule action [{}] {}", action.actionId(), note);
-            return action.withStatus(TaskStatus.SCHEDULED, note);
+            next = scheduledAction.withStatus(TaskStatus.SCHEDULED, note);
+        } else {
+            next = executeNow(planId, action, operatorUserId);
         }
-        return executeNow(action);
+        executionLogRepository.logStateChange(planId, action, next, operatorUserId);
+        return next;
     }
 
-    public TaskAction executeNow(TaskAction action) {
+    public TaskAction executeNow(String planId, TaskAction action, String operatorUserId) {
         SkillDefinition skill = skillCatalog.getOrUnknown(action.actionType());
-        return genericSkillExecutor.execute(skill, action);
+        TaskAction next = genericSkillExecutor.execute(skill, action);
+        executionLogRepository.logStateChange(planId, action, next, operatorUserId);
+        return next;
     }
 }
