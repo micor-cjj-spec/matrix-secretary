@@ -1,0 +1,26 @@
+name: reply_message
+displayName: 回复消息
+description: 用户要求收到某人消息后回复指定内容时使用。
+triggerKeywords:
+  - 回复
+  - 回一下
+  - 回消息
+  - 收到消息
+actionType: reply_message
+riskLevel: HIGH
+requiresConfirmation: true
+inputSchema:
+  type: object
+  required:
+    - content
+    - target
+  properties:
+    content:
+      type: string
+      description: 回复内容
+    target:
+      type: object
+      description: 回复对象
+execution:
+  type: builtin
+  executor: reply
