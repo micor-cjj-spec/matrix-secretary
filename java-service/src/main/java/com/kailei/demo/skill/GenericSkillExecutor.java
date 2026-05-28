@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -63,18 +64,14 @@ public class GenericSkillExecutor {
             Object response;
             if ("POST".equals(method)) {
                 response = restClient.post()
-                        .uri(url)
+                        .uri(buildUrl(url, query))
                         .headers(headers -> execution.headers().forEach(headers::add))
                         .body(body.isEmpty() ? buildDefaultBody(action) : body)
                         .retrieve()
                         .body(Object.class);
             } else {
                 response = restClient.get()
-                        .uri(uriBuilder -> {
-                            var builder = uriBuilder.path(url);
-                            query.forEach(builder::queryParam);
-                            return builder.build();
-                        })
+                        .uri(buildUrl(url, query))
                         .headers(headers -> execution.headers().forEach(headers::add))
                         .retrieve()
                         .body(Object.class);
@@ -87,10 +84,17 @@ public class GenericSkillExecutor {
         }
     }
 
+    private String buildUrl(String url, Map<String, Object> query) {
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(url);
+        query.forEach(builder::queryParam);
+        return builder.build().toUriString();
+    }
+
     private Map<String, Object> buildDefaultBody(TaskAction action) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("actionId", action.actionId());
         body.put("actionType", action.actionType());
+        body.put("skillName", action.skillName());
         body.put("title", action.title());
         body.put("content", action.content());
         body.put("target", action.target());
