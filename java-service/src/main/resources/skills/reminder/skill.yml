@@ -1,0 +1,25 @@
+name: reminder
+displayName: 创建提醒
+description: 用户要求在某个时间提醒自己或提醒处理某件事时使用。
+triggerKeywords:
+  - 提醒我
+  - 到点提醒
+  - 定时提醒
+  - 几分钟后提醒
+actionType: reminder
+riskLevel: MEDIUM
+requiresConfirmation: false
+inputSchema:
+  type: object
+  required:
+    - content
+  properties:
+    content:
+      type: string
+      description: 提醒内容
+    schedule:
+      type: object
+      description: 提醒时间
+execution:
+  type: builtin
+  executor: reminder
