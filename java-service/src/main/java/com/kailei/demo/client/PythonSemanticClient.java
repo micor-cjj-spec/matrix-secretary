@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.util.List;
+import java.util.Map;
 
 @Component
 public class PythonSemanticClient {
@@ -49,10 +50,12 @@ public class PythonSemanticClient {
     public record PythonTaskAction(
             @JsonProperty("action_id") String actionId,
             @JsonProperty("action_type") String actionType,
+            @JsonProperty("skill_name") String skillName,
             String title,
             String content,
             TaskTarget target,
             TaskSchedule schedule,
+            Map<String, Object> args,
             String priority,
             Double confidence,
             @JsonProperty("requires_confirmation") Boolean requiresConfirmation,
