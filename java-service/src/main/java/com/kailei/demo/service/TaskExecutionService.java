@@ -31,18 +31,16 @@ public class TaskExecutionService {
     }
 
     public TaskAction confirmAction(String planId, TaskAction action, String operatorUserId) {
-        TaskAction next;
         if (action.schedule() != null && action.schedule().isScheduled()) {
             TaskAction scheduledAction = action.withSchedule(cronScheduleService.ensureCronAndNextRun(action.schedule()));
             String note = "已进入调度队列: cron=" + scheduledAction.schedule().cron()
                     + ", nextRunAt=" + scheduledAction.schedule().effectiveRunAt();
             log.info("Schedule action [{}] {}", action.actionId(), note);
-            next = scheduledAction.withStatus(TaskStatus.SCHEDULED, note);
-        } else {
-            next = executeNow(planId, action, operatorUserId);
+            TaskAction next = scheduledAction.withStatus(TaskStatus.SCHEDULED, note);
+            executionLogRepository.logStateChange(planId, action, next, operatorUserId);
+            return next;
         }
-        executionLogRepository.logStateChange(planId, action, next, operatorUserId);
-        return next;
+        return executeNow(planId, action, operatorUserId);
     }
 
     public TaskAction executeNow(String planId, TaskAction action, String operatorUserId) {
