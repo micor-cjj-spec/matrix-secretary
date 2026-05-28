@@ -1,5 +1,6 @@
 package com.kailei.demo.model;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public record TaskAction(
@@ -21,7 +22,7 @@ public record TaskAction(
         String executionNote
 ) {
     public TaskAction {
-        args = args == null ? Map.of() : Map.copyOf(args);
+        args = args == null ? Map.of() : new LinkedHashMap<>(args);
         riskLevel = riskLevel == null || riskLevel.isBlank() ? "LOW" : riskLevel;
         requiresConfirmation = Boolean.TRUE.equals(requiresConfirmation);
     }
