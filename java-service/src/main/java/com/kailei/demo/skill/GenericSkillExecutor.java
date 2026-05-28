@@ -19,6 +19,7 @@ public class GenericSkillExecutor {
 
     private final RestClient restClient;
     private final SkillTemplateRenderer renderer;
+    private final SkillArgumentValidator validator = new SkillArgumentValidator();
 
     public GenericSkillExecutor(RestClient restClient, ObjectMapper objectMapper) {
         this.restClient = restClient;
@@ -26,6 +27,11 @@ public class GenericSkillExecutor {
     }
 
     public TaskAction execute(SkillDefinition skill, TaskAction action) {
+        try {
+            validator.validate(skill, action);
+        } catch (IllegalArgumentException ex) {
+            return action.withStatus(TaskStatus.FAILED, ex.getMessage());
+        }
         String type = skill.execution().type();
         return switch (type) {
             case "builtin" -> executeBuiltin(skill, action);
