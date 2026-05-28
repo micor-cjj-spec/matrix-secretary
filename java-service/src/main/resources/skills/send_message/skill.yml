@@ -1,0 +1,27 @@
+name: send_message
+displayName: 发送消息
+description: 用户要求向个人、群、团队发送通知或消息时使用。
+triggerKeywords:
+  - 发消息
+  - 通知
+  - 告诉
+  - 转告
+  - 群发
+actionType: send_message
+riskLevel: HIGH
+requiresConfirmation: true
+inputSchema:
+  type: object
+  required:
+    - content
+    - target
+  properties:
+    content:
+      type: string
+      description: 消息内容
+    target:
+      type: object
+      description: 接收人或群组
+execution:
+  type: builtin
+  executor: message
