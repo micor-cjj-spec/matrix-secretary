@@ -1,16 +1,7 @@
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-
-
-class ActionType(str, Enum):
-    REPLY_MESSAGE = "reply_message"
-    SEND_MESSAGE = "send_message"
-    SEND_EMAIL = "send_email"
-    REMINDER = "reminder"
-    CREATE_TODO = "create_todo"
-    SCHEDULE_TASK = "schedule_task"
 
 
 class ScheduleType(str, Enum):
@@ -35,11 +26,13 @@ class TaskSchedule(BaseModel):
 
 class TaskAction(BaseModel):
     action_id: str
-    action_type: ActionType
+    action_type: str
+    skill_name: str | None = None
     title: str
     content: str
     target: TaskTarget = Field(default_factory=TaskTarget)
     schedule: TaskSchedule = Field(default_factory=TaskSchedule)
+    args: dict[str, Any] = Field(default_factory=dict)
     priority: Literal["low", "normal", "high"] = "normal"
     confidence: float = Field(ge=0, le=1)
     requires_confirmation: bool = True
