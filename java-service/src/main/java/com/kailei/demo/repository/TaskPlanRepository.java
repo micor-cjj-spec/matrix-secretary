@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -89,11 +90,14 @@ public class TaskPlanRepository {
         entity.setActionId(action.actionId());
         entity.setPlanId(planId);
         entity.setActionType(action.actionType());
+        entity.setSkillName(action.skillName());
         entity.setTitle(action.title());
         entity.setContent(action.content());
         entity.setTargetJson(writeJson(action.target()));
         entity.setScheduleJson(writeJson(action.schedule()));
+        entity.setArgsJson(writeJson(action.args()));
         entity.setPriority(action.priority());
+        entity.setRiskLevel(action.riskLevel());
         entity.setConfidence(action.confidence());
         entity.setRequiresConfirmation(action.requiresConfirmation());
         entity.setSourceSentence(action.sourceSentence());
@@ -125,11 +129,14 @@ public class TaskPlanRepository {
         return new TaskAction(
                 entity.getActionId(),
                 entity.getActionType(),
+                entity.getSkillName(),
                 entity.getTitle(),
                 entity.getContent(),
                 readJson(entity.getTargetJson(), TaskTarget.class, new TaskTarget("unknown", null, null)),
                 readJson(entity.getScheduleJson(), TaskSchedule.class, new TaskSchedule("none", null, null, null, "Asia/Shanghai")),
+                readMap(entity.getArgsJson()),
                 entity.getPriority(),
+                entity.getRiskLevel(),
                 entity.getConfidence(),
                 entity.getRequiresConfirmation(),
                 entity.getSourceSentence(),
@@ -156,6 +163,18 @@ public class TaskPlanRepository {
             });
         } catch (JsonProcessingException ex) {
             return List.of();
+        }
+    }
+
+    private Map<String, Object> readMap(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() {
+            });
+        } catch (JsonProcessingException ex) {
+            return Map.of();
         }
     }
 
