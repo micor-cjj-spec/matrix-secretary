@@ -130,7 +130,9 @@ def infer_schedule(sentence: str, timezone_name: str) -> TaskSchedule:
             schedule_type=ScheduleType.ONCE,
             original_text=original_text,
             run_at=run_at,
+            cron=cron_from_run_at(run_at),
             timezone=timezone_name,
+            next_run_at=run_at,
         )
 
     return TaskSchedule(schedule_type=ScheduleType.NONE, timezone=timezone_name)
@@ -165,6 +167,14 @@ def infer_recurring_cron(sentence: str) -> dict[str, str] | None:
         return {"original_text": match.group(0), "cron": f"0 0 {hour} * * ?"}
 
     return None
+
+
+def cron_from_run_at(run_at: str) -> str | None:
+    try:
+        target = datetime.fromisoformat(run_at)
+        return f"0 {target.minute} {target.hour} {target.day} {target.month} ? {target.year}"
+    except ValueError:
+        return None
 
 
 def infer_once_time(sentence: str) -> tuple[str | None, str | None]:
