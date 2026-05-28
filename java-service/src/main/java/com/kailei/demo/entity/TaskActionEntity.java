@@ -29,6 +29,10 @@ public class TaskActionEntity {
     @ColumnComment("动作类型")
     private String actionType;
 
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 64)
+    @ColumnComment("技能名称")
+    private String skillName;
+
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 255)
     @ColumnComment("任务标题")
     private String title;
@@ -45,9 +49,17 @@ public class TaskActionEntity {
     @ColumnComment("调度信息JSON")
     private String scheduleJson;
 
+    @ColumnType(MysqlTypeConstant.JSON)
+    @ColumnComment("技能参数JSON")
+    private String argsJson;
+
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 32)
     @ColumnComment("优先级")
     private String priority;
+
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 32)
+    @ColumnComment("风险等级")
+    private String riskLevel;
 
     @ColumnComment("置信度")
     private Double confidence;
@@ -74,123 +86,40 @@ public class TaskActionEntity {
     @ColumnComment("排序号")
     private Integer sortOrder;
 
-    public String getActionId() {
-        return actionId;
-    }
-
-    public void setActionId(String actionId) {
-        this.actionId = actionId;
-    }
-
-    public String getPlanId() {
-        return planId;
-    }
-
-    public void setPlanId(String planId) {
-        this.planId = planId;
-    }
-
-    public String getActionType() {
-        return actionType;
-    }
-
-    public void setActionType(String actionType) {
-        this.actionType = actionType;
-    }
-
-    public String getTitle() {
-        return title;
-    }
-
-    public void setTitle(String title) {
-        this.title = title;
-    }
-
-    public String getContent() {
-        return content;
-    }
-
-    public void setContent(String content) {
-        this.content = content;
-    }
-
-    public String getTargetJson() {
-        return targetJson;
-    }
-
-    public void setTargetJson(String targetJson) {
-        this.targetJson = targetJson;
-    }
-
-    public String getScheduleJson() {
-        return scheduleJson;
-    }
-
-    public void setScheduleJson(String scheduleJson) {
-        this.scheduleJson = scheduleJson;
-    }
-
-    public String getPriority() {
-        return priority;
-    }
-
-    public void setPriority(String priority) {
-        this.priority = priority;
-    }
-
-    public Double getConfidence() {
-        return confidence;
-    }
-
-    public void setConfidence(Double confidence) {
-        this.confidence = confidence;
-    }
-
-    public Boolean getRequiresConfirmation() {
-        return requiresConfirmation;
-    }
-
-    public void setRequiresConfirmation(Boolean requiresConfirmation) {
-        this.requiresConfirmation = requiresConfirmation;
-    }
-
-    public String getSourceSentence() {
-        return sourceSentence;
-    }
-
-    public void setSourceSentence(String sourceSentence) {
-        this.sourceSentence = sourceSentence;
-    }
-
-    public String getAnalysisNote() {
-        return analysisNote;
-    }
-
-    public void setAnalysisNote(String analysisNote) {
-        this.analysisNote = analysisNote;
-    }
-
-    public String getStatus() {
-        return status;
-    }
-
-    public void setStatus(String status) {
-        this.status = status;
-    }
-
-    public String getExecutionNote() {
-        return executionNote;
-    }
-
-    public void setExecutionNote(String executionNote) {
-        this.executionNote = executionNote;
-    }
-
-    public Integer getSortOrder() {
-        return sortOrder;
-    }
-
-    public void setSortOrder(Integer sortOrder) {
-        this.sortOrder = sortOrder;
-    }
+    public String getActionId() { return actionId; }
+    public void setActionId(String actionId) { this.actionId = actionId; }
+    public String getPlanId() { return planId; }
+    public void setPlanId(String planId) { this.planId = planId; }
+    public String getActionType() { return actionType; }
+    public void setActionType(String actionType) { this.actionType = actionType; }
+    public String getSkillName() { return skillName; }
+    public void setSkillName(String skillName) { this.skillName = skillName; }
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+    public String getContent() { return content; }
+    public void setContent(String content) { this.content = content; }
+    public String getTargetJson() { return targetJson; }
+    public void setTargetJson(String targetJson) { this.targetJson = targetJson; }
+    public String getScheduleJson() { return scheduleJson; }
+    public void setScheduleJson(String scheduleJson) { this.scheduleJson = scheduleJson; }
+    public String getArgsJson() { return argsJson; }
+    public void setArgsJson(String argsJson) { this.argsJson = argsJson; }
+    public String getPriority() { return priority; }
+    public void setPriority(String priority) { this.priority = priority; }
+    public String getRiskLevel() { return riskLevel; }
+    public void setRiskLevel(String riskLevel) { this.riskLevel = riskLevel; }
+    public Double getConfidence() { return confidence; }
+    public void setConfidence(Double confidence) { this.confidence = confidence; }
+    public Boolean getRequiresConfirmation() { return requiresConfirmation; }
+    public void setRequiresConfirmation(Boolean requiresConfirmation) { this.requiresConfirmation = requiresConfirmation; }
+    public String getSourceSentence() { return sourceSentence; }
+    public void setSourceSentence(String sourceSentence) { this.sourceSentence = sourceSentence; }
+    public String getAnalysisNote() { return analysisNote; }
+    public void setAnalysisNote(String analysisNote) { this.analysisNote = analysisNote; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    public String getExecutionNote() { return executionNote; }
+    public void setExecutionNote(String executionNote) { this.executionNote = executionNote; }
+    public Integer getSortOrder() { return sortOrder; }
+    public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
 }
