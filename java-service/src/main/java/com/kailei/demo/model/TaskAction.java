@@ -47,4 +47,25 @@ public record TaskAction(
                 note
         );
     }
+
+    public TaskAction withSchedule(TaskSchedule nextSchedule) {
+        return new TaskAction(
+                actionId,
+                actionType,
+                skillName,
+                title,
+                content,
+                target,
+                nextSchedule,
+                args,
+                priority,
+                riskLevel,
+                confidence,
+                requiresConfirmation,
+                sourceSentence,
+                analysisNote,
+                status,
+                executionNote
+        );
+    }
 }
