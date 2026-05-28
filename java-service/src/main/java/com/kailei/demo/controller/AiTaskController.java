@@ -33,7 +33,8 @@ public class AiTaskController {
     @PostMapping("/{planId}/confirm")
     public ConfirmTaskResponse confirm(@PathVariable String planId,
                                        @RequestBody(required = false) ConfirmTaskRequest request) {
-        return aiTaskService.confirm(planId);
+        String operatorUserId = request == null ? null : request.operatorUserId();
+        return aiTaskService.confirm(planId, operatorUserId);
     }
 
     @GetMapping("/{planId}")
