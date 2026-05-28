@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Secretary Java + Python Demo</title>
+  <title>AI 秘书 Java + Python Demo</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: Arial, "Microsoft YaHei", sans-serif; background: #f4f6fa; color: #162033; }
@@ -21,8 +21,13 @@
     .warning { border: 1px solid #f2c97d; background: #fff8e6; color: #7a4b00; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px; line-height: 1.55; }
     .meta { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 7px 10px; font-size: 13px; line-height: 1.5; }
     .label { color: #64748b; }
-    pre { margin: 0; padding: 13px; max-height: 440px; overflow: auto; background: #111827; color: #e5e7eb; border-radius: 8px; font-size: 12px; white-space: pre-wrap; }
-    code { font-family: Consolas, Monaco, monospace; font-size: 12px; }
+    .value { color: #0f172a; word-break: break-word; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #1d4ed8; font-size: 12px; }
+    .tag.success { background: #ecfdf5; color: #047857; }
+    .tag.warn { background: #fff7ed; color: #c2410c; }
+    .tag.danger { background: #fef2f2; color: #b91c1c; }
+    .expression { font-family: Consolas, Monaco, monospace; background: #f1f5f9; border-radius: 4px; padding: 2px 6px; }
+    .debug-note { color: #64748b; font-size: 12px; line-height: 1.6; margin-top: 10px; }
     @media (max-width: 920px) { main { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -41,16 +46,53 @@
   <section>
     <h1>任务计划</h1>
     <div id="tasks"></div>
-    <pre id="json">{}</pre>
+    <div class="debug-note">页面仅展示中文业务信息；后端原始字段已在前端做中文转换。</div>
   </section>
 </main>
 <script>
   const input = document.querySelector("#input");
   const tasksEl = document.querySelector("#tasks");
-  const jsonEl = document.querySelector("#json");
   const statusEl = document.querySelector("#status");
   const confirmBtn = document.querySelector("#confirmBtn");
   let currentPlanId = null;
+
+  const ACTION_TYPE_TEXT = {
+    reply_message: "回复消息",
+    send_message: "发送消息",
+    send_email: "发送邮件",
+    reminder: "提醒事项",
+    create_todo: "创建待办",
+    schedule_task: "定时任务"
+  };
+
+  const TARGET_TYPE_TEXT = {
+    user: "用户",
+    group: "群组",
+    email: "邮箱",
+    dynamic: "动态对象",
+    self: "本人",
+    unknown: "未识别"
+  };
+
+  const STATUS_TEXT = {
+    WAITING_CONFIRM: "等待确认",
+    CONFIRMED: "已确认",
+    EXECUTED: "已执行",
+    SCHEDULED: "已调度",
+    FAILED: "执行失败"
+  };
+
+  const SCHEDULE_TYPE_TEXT = {
+    none: "无需定时",
+    once: "一次性任务",
+    recurring: "周期任务"
+  };
+
+  const PRIORITY_TEXT = {
+    low: "低",
+    normal: "普通",
+    high: "高"
+  };
 
   document.querySelector("#previewBtn").addEventListener("click", preview);
   confirmBtn.addEventListener("click", confirmPlan);
@@ -65,7 +107,7 @@
     const data = await res.json();
     currentPlanId = data.planId;
     confirmBtn.disabled = !currentPlanId;
-    statusEl.textContent = `状态：${data.status}`;
+    statusEl.textContent = `状态：${formatStatus(data.status)}`;
     render(data);
   }
 
@@ -77,32 +119,94 @@
       body: JSON.stringify({ operatorUserId: "demo-user" })
     });
     const data = await res.json();
-    statusEl.textContent = `执行：${data.executionSummary.executed}，调度：${data.executionSummary.scheduled}`;
+    statusEl.textContent = `已执行：${data.executionSummary.executed}，已调度：${data.executionSummary.scheduled}，失败：${data.executionSummary.failed}`;
     render(data.plan);
   }
 
   function render(plan) {
-    jsonEl.textContent = JSON.stringify(plan, null, 2);
     const warnings = (plan.warnings || []).map(item => `<div>${escapeHtml(item)}</div>`).join("");
     const warningHtml = warnings ? `<div class="warning">${warnings}</div>` : "";
     const taskHtml = (plan.tasks || []).map(task => `
       <div class="task">
         <h2>${escapeHtml(task.title)}</h2>
         <div class="meta">
-          <div class="label">动作类型</div><div><code>${task.actionType}</code></div>
-          <div class="label">对象</div><div>${escapeHtml(task.target?.name || task.target?.address || "未指定")}</div>
-          <div class="label">对象类型</div><div><code>${escapeHtml(task.target?.targetType || "unknown")}</code></div>
-          <div class="label">计划</div><div>${escapeHtml(task.schedule?.originalText || "立即/待确认")}</div>
-          <div class="label">置信度</div><div>${formatConfidence(task.confidence)}</div>
-          <div class="label">状态</div><div><code>${task.status}</code></div>
-          <div class="label">内容</div><div>${escapeHtml(task.content || "")}</div>
-          <div class="label">解析备注</div><div>${escapeHtml(task.analysisNote || "")}</div>
-          <div class="label">说明</div><div>${escapeHtml(task.executionNote || "")}</div>
+          <div class="label">动作类型</div><div class="value"><span class="tag">${formatActionType(task.actionType)}</span></div>
+          <div class="label">对象</div><div class="value">${escapeHtml(task.target?.name || task.target?.address || "未指定")}</div>
+          <div class="label">对象类型</div><div class="value">${formatTargetType(task.target?.targetType)}</div>
+          <div class="label">计划类型</div><div class="value">${formatScheduleType(task.schedule?.scheduleType)}</div>
+          <div class="label">计划时间</div><div class="value">${formatScheduleText(task.schedule)}</div>
+          ${renderCron(task.schedule)}
+          <div class="label">优先级</div><div class="value">${formatPriority(task.priority)}</div>
+          <div class="label">置信度</div><div class="value">${formatConfidence(task.confidence)}</div>
+          <div class="label">状态</div><div class="value">${formatStatusTag(task.status)}</div>
+          <div class="label">内容</div><div class="value">${escapeHtml(task.content || "")}</div>
+          <div class="label">解析备注</div><div class="value">${escapeHtml(task.analysisNote || "")}</div>
+          <div class="label">说明</div><div class="value">${formatExecutionNote(task.executionNote || "")}</div>
         </div>
       </div>
     `).join("");
-    const emptyHtml = taskHtml ? "" : `<div class="warning">没有生成可执行任务，请查看解析警告或检查 LLM 配置。</div>`;
+    const emptyHtml = taskHtml ? "" : `<div class="warning">没有生成可执行任务，请查看解析警告或检查模型配置。</div>`;
     tasksEl.innerHTML = warningHtml + taskHtml + emptyHtml;
+  }
+
+  function renderCron(schedule) {
+    if (!schedule || !schedule.cron) return "";
+    return `
+      <div class="label">调度表达式</div>
+      <div class="value"><span class="expression">${escapeHtml(schedule.cron)}</span></div>
+    `;
+  }
+
+  function formatActionType(value) {
+    return ACTION_TYPE_TEXT[value] || "未知动作";
+  }
+
+  function formatTargetType(value) {
+    return TARGET_TYPE_TEXT[value] || "未识别";
+  }
+
+  function formatStatus(value) {
+    return STATUS_TEXT[value] || "未知状态";
+  }
+
+  function formatStatusTag(value) {
+    const text = formatStatus(value);
+    let className = "tag";
+    if (value === "EXECUTED" || value === "CONFIRMED") className += " success";
+    if (value === "SCHEDULED" || value === "WAITING_CONFIRM") className += " warn";
+    if (value === "FAILED") className += " danger";
+    return `<span class="${className}">${text}</span>`;
+  }
+
+  function formatScheduleType(value) {
+    return SCHEDULE_TYPE_TEXT[value] || "无需定时";
+  }
+
+  function formatScheduleText(schedule) {
+    if (!schedule) return "立即执行或等待人工确认";
+    const parts = [];
+    if (schedule.originalText) parts.push(schedule.originalText);
+    if (schedule.runAt) parts.push(`执行时间：${formatDateTime(schedule.runAt)}`);
+    if (schedule.nextRunAt) parts.push(`下次触发：${formatDateTime(schedule.nextRunAt)}`);
+    if (schedule.lastRunAt) parts.push(`上次触发：${formatDateTime(schedule.lastRunAt)}`);
+    return escapeHtml(parts.join("；") || "立即执行或等待人工确认");
+  }
+
+  function formatExecutionNote(value) {
+    if (!value) return "";
+    const text = String(value)
+      .replaceAll("WAITING_CONFIRM", "等待确认")
+      .replaceAll("CONFIRMED", "已确认")
+      .replaceAll("EXECUTED", "已执行")
+      .replaceAll("SCHEDULED", "已调度")
+      .replaceAll("FAILED", "执行失败")
+      .replaceAll("nextRunAt=", "下次触发时间：")
+      .replaceAll("cron=", "调度表达式：");
+    return escapeHtml(text);
+  }
+
+  function formatPriority(value) {
+    return PRIORITY_TEXT[value] || "普通";
   }
 
   function escapeHtml(value) {
@@ -114,6 +218,13 @@
   function formatConfidence(value) {
     if (typeof value !== "number") return "未知";
     return `${Math.round(value * 100)}%`;
+  }
+
+  function formatDateTime(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString("zh-CN", { hour12: false });
   }
 </script>
 </body>
