@@ -1,0 +1,22 @@
+name: create_todo
+displayName: 创建待办
+description: 用户要求记录待办、创建任务、后续跟进或处理事项时使用。
+triggerKeywords:
+  - 待办
+  - 任务
+  - 跟进
+  - 处理
+actionType: create_todo
+riskLevel: MEDIUM
+requiresConfirmation: false
+inputSchema:
+  type: object
+  required:
+    - content
+  properties:
+    content:
+      type: string
+      description: 待办内容
+execution:
+  type: builtin
+  executor: todo
