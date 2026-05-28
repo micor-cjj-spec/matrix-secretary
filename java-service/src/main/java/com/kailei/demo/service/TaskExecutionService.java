@@ -2,6 +2,9 @@ package com.kailei.demo.service;
 
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskStatus;
+import com.kailei.demo.skill.GenericSkillExecutor;
+import com.kailei.demo.skill.SkillCatalog;
+import com.kailei.demo.skill.SkillDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -10,6 +13,14 @@ import org.springframework.stereotype.Service;
 public class TaskExecutionService {
 
     private static final Logger log = LoggerFactory.getLogger(TaskExecutionService.class);
+
+    private final SkillCatalog skillCatalog;
+    private final GenericSkillExecutor genericSkillExecutor;
+
+    public TaskExecutionService(SkillCatalog skillCatalog, GenericSkillExecutor genericSkillExecutor) {
+        this.skillCatalog = skillCatalog;
+        this.genericSkillExecutor = genericSkillExecutor;
+    }
 
     public TaskAction confirmAction(TaskAction action) {
         if (action.schedule() != null && action.schedule().isScheduled()) {
@@ -21,15 +32,7 @@ public class TaskExecutionService {
     }
 
     public TaskAction executeNow(TaskAction action) {
-        String note = switch (action.actionType()) {
-            case "send_email" -> "模拟发送邮件: " + action.content();
-            case "send_message" -> "模拟发送消息: " + action.content();
-            case "reply_message" -> "模拟回复消息: " + action.content();
-            case "reminder" -> "模拟创建提醒: " + action.content();
-            case "create_todo" -> "模拟创建待办: " + action.content();
-            default -> "模拟执行任务: " + action.content();
-        };
-        log.info("Execute action [{}] {}", action.actionId(), note);
-        return action.withStatus(TaskStatus.EXECUTED, note);
+        SkillDefinition skill = skillCatalog.getOrUnknown(action.actionType());
+        return genericSkillExecutor.execute(skill, action);
     }
 }
