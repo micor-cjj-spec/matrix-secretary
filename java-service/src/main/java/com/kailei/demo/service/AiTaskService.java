@@ -6,6 +6,7 @@ import com.kailei.demo.model.ExecutionSummary;
 import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
+import com.kailei.demo.model.TaskSchedule;
 import com.kailei.demo.model.TaskStatus;
 import com.kailei.demo.repository.TaskPlanRepository;
 import com.kailei.demo.skill.SkillCatalog;
@@ -21,19 +22,24 @@ import java.util.stream.IntStream;
 @Service
 public class AiTaskService {
 
+    private static final String SYSTEM_OPERATOR = "system-scheduler";
+
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
     private final TaskExecutionService executionService;
     private final SkillCatalog skillCatalog;
+    private final CronScheduleService cronScheduleService;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
                          TaskExecutionService executionService,
-                         SkillCatalog skillCatalog) {
+                         SkillCatalog skillCatalog,
+                         CronScheduleService cronScheduleService) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
         this.skillCatalog = skillCatalog;
+        this.cronScheduleService = cronScheduleService;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
@@ -74,6 +80,7 @@ public class AiTaskService {
         boolean requiresConfirmation = Boolean.TRUE.equals(item.requiresConfirmation())
                 || Boolean.TRUE.equals(skill.requiresConfirmation())
                 || "HIGH".equalsIgnoreCase(skill.riskLevel());
+        TaskSchedule schedule = cronScheduleService.ensureCronAndNextRun(item.schedule());
         return new TaskAction(
                 uniqueActionId(planId, item.actionId(), index),
                 item.actionType(),
@@ -81,7 +88,7 @@ public class AiTaskService {
                 item.title(),
                 item.content(),
                 item.target(),
-                item.schedule(),
+                schedule,
                 item.args(),
                 item.priority(),
                 skill.riskLevel(),
@@ -101,14 +108,17 @@ public class AiTaskService {
         return (planId + "-" + suffix).replaceAll("[^A-Za-z0-9_-]", "-");
     }
 
-    public ConfirmTaskResponse confirm(String planId) {
+    public ConfirmTaskResponse confirm(String planId, String operatorUserId) {
         TaskPlan plan = get(planId);
         if (plan.status() != TaskStatus.WAITING_CONFIRM) {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
 
+        String effectiveOperator = operatorUserId == null || operatorUserId.isBlank()
+                ? plan.userId()
+                : operatorUserId;
         List<TaskAction> nextActions = plan.tasks().stream()
-                .map(executionService::confirmAction)
+                .map(action -> executionService.confirmAction(plan.planId(), action, effectiveOperator))
                 .toList();
 
         TaskPlan nextPlan = plan.withStatus(TaskStatus.CONFIRMED, nextActions);
@@ -129,7 +139,7 @@ public class AiTaskService {
         OffsetDateTime now = OffsetDateTime.now();
         repository.findAll().forEach(plan -> {
             List<TaskAction> nextActions = plan.tasks().stream()
-                    .map(action -> dispatchIfDue(action, now))
+                    .map(action -> dispatchIfDue(plan.planId(), action, now))
                     .toList();
             if (!nextActions.equals(plan.tasks())) {
                 repository.save(plan.withStatus(plan.status(), nextActions));
@@ -144,21 +154,30 @@ public class AiTaskService {
         return new ExecutionSummary(executed, scheduled, failed);
     }
 
-    private TaskAction dispatchIfDue(TaskAction action, OffsetDateTime now) {
+    private TaskAction dispatchIfDue(String planId, TaskAction action, OffsetDateTime now) {
         if (action.status() != TaskStatus.SCHEDULED || action.schedule() == null) {
             return action;
         }
-        if (!"once".equalsIgnoreCase(action.schedule().scheduleType()) || action.schedule().runAt() == null) {
-            return action;
+        TaskSchedule schedule = cronScheduleService.ensureCronAndNextRun(action.schedule());
+        if (schedule == null || schedule.effectiveRunAt() == null) {
+            return action.withStatus(TaskStatus.FAILED, "调度任务缺少可执行时间或cron表达式");
         }
         try {
-            OffsetDateTime runAt = OffsetDateTime.parse(action.schedule().runAt());
-            if (!runAt.isAfter(now)) {
-                return executionService.executeNow(action);
+            OffsetDateTime runAt = OffsetDateTime.parse(schedule.effectiveRunAt());
+            if (runAt.isAfter(now)) {
+                return action.withSchedule(schedule);
             }
+            TaskAction executable = action.withSchedule(schedule);
+            TaskAction executed = executionService.executeNow(planId, executable, SYSTEM_OPERATOR);
+            if (schedule.isRecurring() && executed.status() == TaskStatus.EXECUTED) {
+                TaskSchedule nextSchedule = cronScheduleService.markTriggered(schedule, now);
+                String note = "周期任务已执行，下一次触发: cron=" + nextSchedule.cron()
+                        + ", nextRunAt=" + nextSchedule.nextRunAt();
+                return executed.withSchedule(nextSchedule).withStatus(TaskStatus.SCHEDULED, note);
+            }
+            return executed;
         } catch (DateTimeParseException ex) {
-            return action.withStatus(TaskStatus.FAILED, "时间格式无法解析: " + action.schedule().runAt());
+            return action.withStatus(TaskStatus.FAILED, "时间格式无法解析: " + schedule.effectiveRunAt());
         }
-        return action;
     }
 }
