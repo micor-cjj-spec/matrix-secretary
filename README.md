@@ -4,16 +4,15 @@
 
 ```text
 浏览器 / 调用方
-  -> Java 主控服务: 业务入口、任务预览、确认、状态编排、执行模拟
-  -> Python 能力服务: 语义识别、任务拆解、时间归一化
+  -> Java 主控服务: 业务入口、任务预览、确认、状态编排、执行模拟、执行日志
+  -> Python 能力服务: 语义识别、任务拆解、时间归一化、cron 表达式生成
 ```
 
 ## 目录结构
 
 ```text
-demo/
-  java-service/      Spring Boot 主控服务
-  python-service/    FastAPI 语义解析服务
+java-service/      Spring Boot 主控服务
+python-service/    FastAPI 语义解析服务
 ```
 
 ## 职责边界
@@ -24,15 +23,18 @@ Python 负责：
 - 拆分多任务
 - 抽取目标对象、内容和时间
 - 输出固定 JSON Schema
+- 只要判定为调度任务，就尽量生成 cron 表达式
 
 Java 负责：
 
 - 对外提供正式业务接口
 - 生成 `traceId` / `planId`
 - 调用 Python 语义服务
-- 保存任务计划到内存仓库
-- 提供用户确认机制
+- 保存任务计划到 MySQL
+- 提供用户确认机制，并记录 `operatorUserId`
 - 编排立即执行、一次性调度、周期调度
+- 对 Skill 参数进行基础校验
+- 记录执行日志到 `ai_task_execution_log`
 - 模拟邮件、消息、待办、提醒执行
 
 ## 启动 Python 服务
@@ -52,8 +54,9 @@ notepad .env
 OPENROUTER_API_KEY=你的新 OpenRouter Key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=deepseek/deepseek-v4-flash:free
-APP_URL=http://127.0.0.1:10000
+APP_URL=http://127.0.0.1:10002
 APP_TITLE=AI Secretary Demo
+SKILL_CATALOG_URL=http://127.0.0.1:10002/api/skills
 ```
 
 `OPENROUTER_API_KEY` 不配置时，Python 会自动回退到本地规则解析器。不要把 API Key 写进代码或提交到仓库；如果 key 曾经发到聊天或截图里，建议在 OpenRouter 后台删除并重新生成。
@@ -78,6 +81,12 @@ Java 服务使用 MySQL + MyBatis Plus + AutoTable。默认数据库配置在：
 
 ```text
 D:\workspace\demo\java-service\src\main\resources\application.yml
+```
+
+默认端口固定使用：
+
+```text
+http://127.0.0.1:10002
 ```
 
 默认连接：
@@ -107,6 +116,12 @@ host:     %
 
 应用启动后会通过 AutoTable 根据实体自动建表：
 
+```text
+com.kailei.demo.entity.TaskPlanEntity         -> ai_task_plan
+com.kailei.demo.entity.TaskActionEntity       -> ai_task_action
+com.kailei.demo.entity.TaskExecutionLogEntity -> ai_task_execution_log
+```
+
 也可以不改文件，启动 Java 前通过环境变量覆盖：
 
 ```powershell
@@ -123,17 +138,6 @@ netstat -ano | findstr :3306
 
 没有输出时，先启动 MySQL，再重启 Java 服务。
 
-```text
-com.kailei.demo.entity.TaskPlanEntity   -> ai_task_plan
-com.kailei.demo.entity.TaskActionEntity -> ai_task_action
-```
-
-也可以先手动执行：
-
-```text
-D:\workspace\demo\java-service\src\main\resources\db\init-database.sql
-```
-
 ```powershell
 cd D:\workspace\demo\java-service
 mvn spring-boot:run
@@ -142,16 +146,17 @@ mvn spring-boot:run
 Java 页面：
 
 ```text
-http://127.0.0.1:10000
+http://127.0.0.1:10002
 ```
 
 Java 接口：
 
 ```text
-POST http://127.0.0.1:10000/api/ai-task/preview
-POST http://127.0.0.1:10000/api/ai-task/{planId}/confirm
-GET  http://127.0.0.1:10000/api/ai-task/{planId}
-GET  http://127.0.0.1:10000/api/ai-task
+GET  http://127.0.0.1:10002/api/skills
+POST http://127.0.0.1:10002/api/ai-task/preview
+POST http://127.0.0.1:10002/api/ai-task/{planId}/confirm
+GET  http://127.0.0.1:10002/api/ai-task/{planId}
+GET  http://127.0.0.1:10002/api/ai-task
 ```
 
 ## 示例请求
@@ -166,6 +171,23 @@ Content-Type: application/json
   "text": "明天下午三点提醒我给王总发邮件，内容是项目方案已经更新；另外每周五上午十点通知团队群提交周报。收到李雷的消息后回复他：我下午会确认合同。",
   "timezone": "Asia/Shanghai",
   "userId": "demo-user"
+}
+```
+
+预览结果中，只要 `schedule.schedule_type` 不是 `none`，就应体现 `cron` 字段：
+
+```json
+{
+  "schedule": {
+    "schedule_type": "recurring",
+    "original_text": "每周五上午十点",
+    "run_at": null,
+    "cron": "0 0 10 ? * FRI",
+    "timezone": "Asia/Shanghai",
+    "next_run_at": "2026-05-29T10:00+08:00",
+    "last_run_at": null,
+    "trigger_count": 0
+  }
 }
 ```
 
@@ -187,17 +209,21 @@ Content-Type: application/json
 ```text
 WAITING_CONFIRM
   -> CONFIRMED
-  -> EXECUTED   立即任务
-  -> SCHEDULED  一次性/周期任务
-  -> FAILED     执行或时间解析失败
+  -> EXECUTED   立即任务 / 到点后的一次性任务
+  -> SCHEDULED  一次性/周期任务等待触发
+  -> FAILED     执行、参数校验或时间解析失败
 ```
 
-当前版本使用 Java 内存仓库 `ConcurrentHashMap` 保存任务计划。一次性调度任务由 Java `@Scheduled` 每 10 秒扫描一次，到点后模拟执行。后续接入正式项目时，可替换为 MySQL + XXL-Job + MQ。
+调度说明：
+
+- 一次性任务：`schedule_type=once`，同时保留 `run_at`、`cron`、`next_run_at`。
+- 周期任务：`schedule_type=recurring`，必须保留 `cron`，Java 服务会计算并维护 `next_run_at`、`last_run_at`、`trigger_count`。
+- Java `@Scheduled` 每 10 秒扫描一次已确认的调度任务；周期任务执行成功后重新进入 `SCHEDULED` 并推进下一次触发时间。
+- 当前执行器仍是模拟执行，正式项目可替换为真实邮件、WebSocket、企业微信、飞书、钉钉等执行器。
 
 ## 后续演进
 
-- Python 规则解析器替换为 LLM structured output。
-- Java 内存仓库替换为 MySQL 表。
-- Java 模拟执行器替换为真实邮件、WebSocket、企业微信、飞书、钉钉等执行器。
-- 一次性和周期任务调度替换为 XXL-Job。
-- 增加联系人消歧、权限校验、审计日志和失败重试。
+- 将规则 fallback 继续弱化为兜底，主路径使用 LLM structured output。
+- 将调度执行替换为 XXL-Job / Quartz / MQ 延迟队列。
+- 增加联系人消歧、权限校验、审计查询和失败重试。
+- 增加 HTTP Skill URL 白名单、敏感参数脱敏、Skill 安全扫描。
