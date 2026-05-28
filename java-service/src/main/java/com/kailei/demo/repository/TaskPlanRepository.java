@@ -133,7 +133,7 @@ public class TaskPlanRepository {
                 entity.getTitle(),
                 entity.getContent(),
                 readJson(entity.getTargetJson(), TaskTarget.class, new TaskTarget("unknown", null, null)),
-                readJson(entity.getScheduleJson(), TaskSchedule.class, new TaskSchedule("none", null, null, null, "Asia/Shanghai")),
+                readJson(entity.getScheduleJson(), TaskSchedule.class, new TaskSchedule("none", null, null, null, "Asia/Shanghai", null, null, 0)),
                 readMap(entity.getArgsJson()),
                 entity.getPriority(),
                 entity.getRiskLevel(),
