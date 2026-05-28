@@ -1,0 +1,172 @@
+package com.kailei.demo.repository;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kailei.demo.entity.TaskActionEntity;
+import com.kailei.demo.entity.TaskPlanEntity;
+import com.kailei.demo.mapper.TaskActionMapper;
+import com.kailei.demo.mapper.TaskPlanMapper;
+import com.kailei.demo.model.TaskAction;
+import com.kailei.demo.model.TaskPlan;
+import com.kailei.demo.model.TaskSchedule;
+import com.kailei.demo.model.TaskStatus;
+import com.kailei.demo.model.TaskTarget;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public class TaskPlanRepository {
+
+    private final TaskPlanMapper taskPlanMapper;
+    private final TaskActionMapper taskActionMapper;
+    private final ObjectMapper objectMapper;
+
+    public TaskPlanRepository(TaskPlanMapper taskPlanMapper,
+                              TaskActionMapper taskActionMapper,
+                              ObjectMapper objectMapper) {
+        this.taskPlanMapper = taskPlanMapper;
+        this.taskActionMapper = taskActionMapper;
+        this.objectMapper = objectMapper;
+    }
+
+    @Transactional
+    public TaskPlan save(TaskPlan plan) {
+        TaskPlanEntity planEntity = toPlanEntity(plan);
+        if (taskPlanMapper.updateById(planEntity) == 0) {
+            taskPlanMapper.insert(planEntity);
+        }
+        taskActionMapper.delete(new LambdaQueryWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getPlanId, plan.planId()));
+        for (int i = 0; i < plan.tasks().size(); i++) {
+            taskActionMapper.insert(toActionEntity(plan.planId(), plan.tasks().get(i), i));
+        }
+        return plan;
+    }
+
+    public Optional<TaskPlan> findById(String planId) {
+        TaskPlanEntity planEntity = taskPlanMapper.selectById(planId);
+        if (planEntity == null) {
+            return Optional.empty();
+        }
+        return Optional.of(toDomain(planEntity, findActions(planId)));
+    }
+
+    public List<TaskPlan> findAll() {
+        return taskPlanMapper.selectList(new LambdaQueryWrapper<TaskPlanEntity>()
+                        .orderByDesc(TaskPlanEntity::getCreatedAt))
+                .stream()
+                .map(planEntity -> toDomain(planEntity, findActions(planEntity.getPlanId())))
+                .toList();
+    }
+
+    private List<TaskActionEntity> findActions(String planId) {
+        return taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getPlanId, planId)
+                .orderByAsc(TaskActionEntity::getSortOrder));
+    }
+
+    private TaskPlanEntity toPlanEntity(TaskPlan plan) {
+        TaskPlanEntity entity = new TaskPlanEntity();
+        entity.setPlanId(plan.planId());
+        entity.setTraceId(plan.traceId());
+        entity.setSourceText(plan.sourceText());
+        entity.setUserId(plan.userId());
+        entity.setStatus(plan.status().name());
+        entity.setWarningsJson(writeJson(plan.warnings()));
+        entity.setCreatedAt(plan.createdAt());
+        entity.setUpdatedAt(plan.updatedAt());
+        return entity;
+    }
+
+    private TaskActionEntity toActionEntity(String planId, TaskAction action, int sortOrder) {
+        TaskActionEntity entity = new TaskActionEntity();
+        entity.setActionId(action.actionId());
+        entity.setPlanId(planId);
+        entity.setActionType(action.actionType());
+        entity.setTitle(action.title());
+        entity.setContent(action.content());
+        entity.setTargetJson(writeJson(action.target()));
+        entity.setScheduleJson(writeJson(action.schedule()));
+        entity.setPriority(action.priority());
+        entity.setConfidence(action.confidence());
+        entity.setRequiresConfirmation(action.requiresConfirmation());
+        entity.setSourceSentence(action.sourceSentence());
+        entity.setAnalysisNote(action.analysisNote());
+        entity.setStatus(action.status().name());
+        entity.setExecutionNote(action.executionNote());
+        entity.setSortOrder(sortOrder);
+        return entity;
+    }
+
+    private TaskPlan toDomain(TaskPlanEntity planEntity, List<TaskActionEntity> actionEntities) {
+        List<TaskAction> actions = actionEntities.stream()
+                .map(this::toDomainAction)
+                .toList();
+        return new TaskPlan(
+                planEntity.getPlanId(),
+                planEntity.getTraceId(),
+                planEntity.getSourceText(),
+                planEntity.getUserId(),
+                TaskStatus.valueOf(planEntity.getStatus()),
+                actions,
+                readWarnings(planEntity.getWarningsJson()),
+                planEntity.getCreatedAt(),
+                planEntity.getUpdatedAt()
+        );
+    }
+
+    private TaskAction toDomainAction(TaskActionEntity entity) {
+        return new TaskAction(
+                entity.getActionId(),
+                entity.getActionType(),
+                entity.getTitle(),
+                entity.getContent(),
+                readJson(entity.getTargetJson(), TaskTarget.class, new TaskTarget("unknown", null, null)),
+                readJson(entity.getScheduleJson(), TaskSchedule.class, new TaskSchedule("none", null, null, null, "Asia/Shanghai")),
+                entity.getPriority(),
+                entity.getConfidence(),
+                entity.getRequiresConfirmation(),
+                entity.getSourceSentence(),
+                entity.getAnalysisNote(),
+                TaskStatus.valueOf(entity.getStatus()),
+                entity.getExecutionNote()
+        );
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("JSON序列化失败", ex);
+        }
+    }
+
+    private List<String> readWarnings(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<ArrayList<String>>() {
+            });
+        } catch (JsonProcessingException ex) {
+            return List.of();
+        }
+    }
+
+    private <T> T readJson(String json, Class<T> type, T fallback) {
+        if (json == null || json.isBlank()) {
+            return fallback;
+        }
+        try {
+            return objectMapper.readValue(json, type);
+        } catch (JsonProcessingException ex) {
+            return fallback;
+        }
+    }
+}

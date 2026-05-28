@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Secretary Java + Python Demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, "Microsoft YaHei", sans-serif; background: #f4f6fa; color: #162033; }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px 18px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 540px); gap: 18px; }
+    section { background: #fff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 18px; min-width: 0; }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    p { margin: 0 0 16px; color: #65758c; line-height: 1.55; }
+    textarea { width: 100%; min-height: 210px; resize: vertical; border: 1px solid #c9d4e5; border-radius: 6px; padding: 13px; font-size: 15px; line-height: 1.65; }
+    button { border: 0; border-radius: 6px; background: #1d4ed8; color: #fff; padding: 10px 15px; cursor: pointer; font-size: 14px; }
+    button.secondary { background: #e8eefc; color: #1d4ed8; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+    .task { border: 1px solid #dbe3ef; background: #fbfcff; border-radius: 8px; padding: 13px; margin-bottom: 12px; }
+    .task h2 { margin: 0 0 10px; font-size: 16px; }
+    .warning { border: 1px solid #f2c97d; background: #fff8e6; color: #7a4b00; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px; line-height: 1.55; }
+    .meta { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 7px 10px; font-size: 13px; line-height: 1.5; }
+    .label { color: #64748b; }
+    pre { margin: 0; padding: 13px; max-height: 440px; overflow: auto; background: #111827; color: #e5e7eb; border-radius: 8px; font-size: 12px; white-space: pre-wrap; }
+    code { font-family: Consolas, Monaco, monospace; font-size: 12px; }
+    @media (max-width: 920px) { main { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>AI 秘书 Java + Python Demo</h1>
+    <p>Java 负责业务入口、预览确认、状态编排；Python 负责语义识别和任务拆解。</p>
+    <textarea id="input">明天下午三点提醒我给王总发邮件，内容是项目方案已经更新；另外每周五上午十点通知团队群提交周报。收到李雷的消息后回复他：我下午会确认合同。</textarea>
+    <div class="toolbar">
+      <button id="previewBtn">生成任务预览</button>
+      <button id="confirmBtn" class="secondary" disabled>确认并编排</button>
+      <span id="status"></span>
+    </div>
+  </section>
+  <section>
+    <h1>任务计划</h1>
+    <div id="tasks"></div>
+    <pre id="json">{}</pre>
+  </section>
+</main>
+<script>
+  const input = document.querySelector("#input");
+  const tasksEl = document.querySelector("#tasks");
+  const jsonEl = document.querySelector("#json");
+  const statusEl = document.querySelector("#status");
+  const confirmBtn = document.querySelector("#confirmBtn");
+  let currentPlanId = null;
+
+  document.querySelector("#previewBtn").addEventListener("click", preview);
+  confirmBtn.addEventListener("click", confirmPlan);
+
+  async function preview() {
+    statusEl.textContent = "解析中...";
+    const res = await fetch("/api/ai-task/preview", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ text: input.value, timezone: "Asia/Shanghai", userId: "demo-user" })
+    });
+    const data = await res.json();
+    currentPlanId = data.planId;
+    confirmBtn.disabled = !currentPlanId;
+    statusEl.textContent = `状态：${data.status}`;
+    render(data);
+  }
+
+  async function confirmPlan() {
+    statusEl.textContent = "编排中...";
+    const res = await fetch(`/api/ai-task/${currentPlanId}/confirm`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ operatorUserId: "demo-user" })
+    });
+    const data = await res.json();
+    statusEl.textContent = `执行：${data.executionSummary.executed}，调度：${data.executionSummary.scheduled}`;
+    render(data.plan);
+  }
+
+  function render(plan) {
+    jsonEl.textContent = JSON.stringify(plan, null, 2);
+    const warnings = (plan.warnings || []).map(item => `<div>${escapeHtml(item)}</div>`).join("");
+    const warningHtml = warnings ? `<div class="warning">${warnings}</div>` : "";
+    const taskHtml = (plan.tasks || []).map(task => `
+      <div class="task">
+        <h2>${escapeHtml(task.title)}</h2>
+        <div class="meta">
+          <div class="label">动作类型</div><div><code>${task.actionType}</code></div>
+          <div class="label">对象</div><div>${escapeHtml(task.target?.name || task.target?.address || "未指定")}</div>
+          <div class="label">对象类型</div><div><code>${escapeHtml(task.target?.targetType || "unknown")}</code></div>
+          <div class="label">计划</div><div>${escapeHtml(task.schedule?.originalText || "立即/待确认")}</div>
+          <div class="label">置信度</div><div>${formatConfidence(task.confidence)}</div>
+          <div class="label">状态</div><div><code>${task.status}</code></div>
+          <div class="label">内容</div><div>${escapeHtml(task.content || "")}</div>
+          <div class="label">解析备注</div><div>${escapeHtml(task.analysisNote || "")}</div>
+          <div class="label">说明</div><div>${escapeHtml(task.executionNote || "")}</div>
+        </div>
+      </div>
+    `).join("");
+    const emptyHtml = taskHtml ? "" : `<div class="warning">没有生成可执行任务，请查看解析警告或检查 LLM 配置。</div>`;
+    tasksEl.innerHTML = warningHtml + taskHtml + emptyHtml;
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, s => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[s]);
+  }
+
+  function formatConfidence(value) {
+    if (typeof value !== "number") return "未知";
+    return `${Math.round(value * 100)}%`;
+  }
+</script>
+</body>
+</html>

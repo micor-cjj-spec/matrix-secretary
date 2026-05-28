@@ -1,0 +1,77 @@
+package org.dromara.autotable.core.dynamicds;
+
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+import org.dromara.autotable.core.utils.StringUtils;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.function.Consumer;
+import java.util.function.Function;
+
+/**
+ * @author don
+ */
+@Slf4j
+public class DataSourceManager {
+
+    /**
+     * 当前数据源名称
+     */
+    private static final ThreadLocal<String> DATASOURCE_NAME_THREAD_LOCAL = new ThreadLocal<>();
+    /**
+     * 当前数据源
+     */
+    private static final ThreadLocal<Deque<DataSource>> DATA_SOURCE_THREAD_LOCAL = ThreadLocal.withInitial(ArrayDeque::new);
+
+    public static <R> R useConnection(Function<Connection, R> function) {
+        DataSource dataSource = getDataSource();
+        try (Connection connection = dataSource.getConnection()) {
+            return function.apply(connection);
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static void useConnection(Consumer<Connection> consumer) {
+        DataSource dataSource = getDataSource();
+        try (Connection connection = dataSource.getConnection()) {
+            consumer.accept(connection);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static void setDataSource(@NonNull DataSource dataSource) {
+        DataSourceManager.DATA_SOURCE_THREAD_LOCAL.get().push(dataSource);
+    }
+
+    public static DataSource getDataSource() {
+        DataSource dataSource = DATA_SOURCE_THREAD_LOCAL.get().peek();
+        if (dataSource == null) {
+            throw new RuntimeException("当前数据源下，未找到对应的SqlSessionFactory");
+        }
+        return dataSource;
+    }
+
+    public static void cleanDataSource() {
+        DATA_SOURCE_THREAD_LOCAL.get().pop();
+    }
+
+    public static void setDatasourceName(@NonNull String datasourceName) {
+        if(StringUtils.hasText(datasourceName)) {
+            DATASOURCE_NAME_THREAD_LOCAL.set(datasourceName);
+        }
+    }
+
+    public static String getDatasourceName() {
+        return DATASOURCE_NAME_THREAD_LOCAL.get();
+    }
+
+    public static void cleanDatasourceName() {
+        DATASOURCE_NAME_THREAD_LOCAL.remove();
+    }
+}

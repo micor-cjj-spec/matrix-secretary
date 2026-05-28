@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Secretary Task Parser Demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      background: #f5f7fb;
+      color: #172033;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 20px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
+      gap: 20px;
+    }
+    section {
+      background: #fff;
+      border: 1px solid #dfe5ef;
+      border-radius: 8px;
+      padding: 20px;
+      min-width: 0;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      line-height: 1.35;
+    }
+    p {
+      margin: 0 0 18px;
+      color: #5e6b80;
+      line-height: 1.6;
+    }
+    textarea {
+      width: 100%;
+      min-height: 220px;
+      resize: vertical;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 14px;
+      font-size: 15px;
+      line-height: 1.7;
+      outline: none;
+    }
+    textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 0;
+      border-radius: 6px;
+      background: #2563eb;
+      color: #fff;
+      padding: 10px 16px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #eef2ff;
+      color: #1d4ed8;
+    }
+    .task {
+      border: 1px solid #dfe5ef;
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 12px;
+      background: #fbfcff;
+    }
+    .task h2 {
+      margin: 0 0 10px;
+      font-size: 16px;
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 8px 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .label { color: #64748b; }
+    code, pre {
+      font-family: Consolas, Monaco, monospace;
+      font-size: 12px;
+    }
+    pre {
+      white-space: pre-wrap;
+      overflow: auto;
+      margin: 0;
+      background: #111827;
+      color: #e5e7eb;
+      border-radius: 8px;
+      padding: 14px;
+      max-height: 420px;
+    }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <h1>AI 秘书任务拆解 Demo</h1>
+      <p>输入一段自然语言，系统会拆成回复消息、发送邮件、定时提醒、周期任务等结构化任务。</p>
+      <textarea id="input">明天下午三点提醒我给王总发邮件，内容是项目方案已经更新；另外每周五上午十点通知团队群提交周报。收到李雷的消息后回复他：我下午会确认合同。</textarea>
+      <div class="toolbar">
+        <button id="parseBtn">解析任务</button>
+        <button class="secondary" id="sampleBtn">填入复杂示例</button>
+      </div>
+    </section>
+    <section>
+      <h1>解析结果</h1>
+      <div id="tasks"></div>
+      <pre id="json">{}</pre>
+    </section>
+  </main>
+  <script>
+    const input = document.querySelector("#input");
+    const tasksEl = document.querySelector("#tasks");
+    const jsonEl = document.querySelector("#json");
+
+    document.querySelector("#sampleBtn").addEventListener("click", () => {
+      input.value = "明天上午九点给 zhangsan@example.com 发邮件，内容是请确认报价单；半小时后提醒我回复李雷的微信；每天晚上八点通知项目群同步进度；把合同审批这件事创建成待办，优先级紧急。";
+    });
+
+    document.querySelector("#parseBtn").addEventListener("click", parse);
+
+    async function parse() {
+      const res = await fetch("/api/v1/semantic/parse", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ text: input.value, timezone: "Asia/Shanghai" })
+      });
+      const data = await res.json();
+      jsonEl.textContent = JSON.stringify(data, null, 2);
+      tasksEl.innerHTML = data.tasks.map(renderTask).join("");
+    }
+
+    function renderTask(task) {
+      return `
+        <div class="task">
+          <h2>${escapeHtml(task.title)}</h2>
+          <div class="meta">
+            <div class="label">动作类型</div><div><code>${task.action_type}</code></div>
+            <div class="label">目标对象</div><div>${escapeHtml(task.target.name || task.target.address || "未指定")}</div>
+            <div class="label">时间计划</div><div>${escapeHtml(task.schedule.original_text || "立即/待确认")}</div>
+            <div class="label">任务内容</div><div>${escapeHtml(task.content)}</div>
+            <div class="label">置信度</div><div>${task.confidence}</div>
+          </div>
+        </div>`;
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (s) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[s]);
+    }
+
+    parse();
+  </script>
+</body>
+</html>

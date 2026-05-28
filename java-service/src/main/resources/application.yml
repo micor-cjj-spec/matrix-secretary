@@ -1,0 +1,27 @@
+server:
+  port: 10002
+
+spring:
+  application:
+    name: ai-secretary-java-demo
+  jackson:
+    time-zone: Asia/Shanghai
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/ai_secretary_demo?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_USERNAME:ai_demo}
+    password: ${MYSQL_PASSWORD:ai_demo_123}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: assign_id
+
+auto-table:
+  enable: true
+  model-package: com.kailei.demo.entity
+
+ai-secretary:
+  python-semantic-url: http://127.0.0.1:10001/api/v1/semantic/parse
