@@ -16,6 +16,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 @Service
 public class AiTaskService {
@@ -48,8 +49,8 @@ public class AiTaskService {
                 )
         );
 
-        List<TaskAction> actions = parsed.tasks().stream()
-                .map(this::toTaskAction)
+        List<TaskAction> actions = IntStream.range(0, parsed.tasks().size())
+                .mapToObj(index -> toTaskAction(planId, parsed.tasks().get(index), index))
                 .toList();
 
         TaskPlan plan = new TaskPlan(
@@ -66,7 +67,7 @@ public class AiTaskService {
         return repository.save(plan);
     }
 
-    private TaskAction toTaskAction(PythonSemanticClient.PythonTaskAction item) {
+    private TaskAction toTaskAction(String planId, PythonSemanticClient.PythonTaskAction item, int index) {
         SkillDefinition skill = item.skillName() != null && !item.skillName().isBlank()
                 ? skillCatalog.findByName(item.skillName()).orElseGet(() -> skillCatalog.getOrUnknown(item.actionType()))
                 : skillCatalog.getOrUnknown(item.actionType());
@@ -74,7 +75,7 @@ public class AiTaskService {
                 || Boolean.TRUE.equals(skill.requiresConfirmation())
                 || "HIGH".equalsIgnoreCase(skill.riskLevel());
         return new TaskAction(
-                item.actionId(),
+                uniqueActionId(planId, item.actionId(), index),
                 item.actionType(),
                 skill.name(),
                 item.title(),
@@ -91,6 +92,13 @@ public class AiTaskService {
                 TaskStatus.WAITING_CONFIRM,
                 "等待用户确认"
         );
+    }
+
+    private String uniqueActionId(String planId, String parserActionId, int index) {
+        String suffix = parserActionId == null || parserActionId.isBlank()
+                ? "act-" + (index + 1)
+                : parserActionId;
+        return (planId + "-" + suffix).replaceAll("[^A-Za-z0-9_-]", "-");
     }
 
     public ConfirmTaskResponse confirm(String planId) {

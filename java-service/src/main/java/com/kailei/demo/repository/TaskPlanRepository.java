@@ -91,19 +91,19 @@ public class TaskPlanRepository {
         entity.setPlanId(planId);
         entity.setActionType(action.actionType());
         entity.setSkillName(action.skillName());
-        entity.setTitle(action.title());
+        entity.setTitle(limit(action.title(), 255));
         entity.setContent(action.content());
         entity.setTargetJson(writeJson(action.target()));
         entity.setScheduleJson(writeJson(action.schedule()));
         entity.setArgsJson(writeJson(action.args()));
-        entity.setPriority(action.priority());
-        entity.setRiskLevel(action.riskLevel());
+        entity.setPriority(limit(action.priority(), 32));
+        entity.setRiskLevel(limit(action.riskLevel(), 32));
         entity.setConfidence(action.confidence());
         entity.setRequiresConfirmation(action.requiresConfirmation());
         entity.setSourceSentence(action.sourceSentence());
-        entity.setAnalysisNote(action.analysisNote());
+        entity.setAnalysisNote(limit(action.analysisNote(), 512));
         entity.setStatus(action.status().name());
-        entity.setExecutionNote(action.executionNote());
+        entity.setExecutionNote(limit(action.executionNote(), 512));
         entity.setSortOrder(sortOrder);
         return entity;
     }
@@ -187,5 +187,12 @@ public class TaskPlanRepository {
         } catch (JsonProcessingException ex) {
             return fallback;
         }
+    }
+
+    private String limit(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, Math.max(0, maxLength - 3)) + "...";
     }
 }

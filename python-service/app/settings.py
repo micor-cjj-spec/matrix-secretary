@@ -18,7 +18,7 @@ class Settings:
     openrouter_model: str = "deepseek/deepseek-v4-flash:free"
     app_url: str = "http://127.0.0.1:10002"
     app_title: str = "AI Secretary Demo"
-    skill_catalog_url: str = "http://127.0.0.1:10000/api/skills"
+    skill_catalog_url: str = "http://127.0.0.1:10002/api/skills"
 
 
 @lru_cache
@@ -34,7 +34,7 @@ def get_settings() -> Settings:
         openrouter_model=os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash:free"),
         app_url=os.getenv("APP_URL", "http://127.0.0.1:10002"),
         app_title=os.getenv("APP_TITLE", "AI Secretary Demo"),
-        skill_catalog_url=os.getenv("SKILL_CATALOG_URL", "http://127.0.0.1:10000/api/skills"),
+        skill_catalog_url=os.getenv("SKILL_CATALOG_URL", "http://127.0.0.1:10002/api/skills"),
     )
 
 
