@@ -39,8 +39,11 @@ JSON 必须符合以下结构：
         "schedule_type": "none | once | recurring",
         "original_text": "原始时间表达，没有则 null",
         "run_at": "ISO-8601 时间，例如 2026-05-27T15:00:00+08:00，没有则 null",
-        "cron": "Quartz cron，例如 0 0 10 ? * FRI，没有则 null",
-        "timezone": "Asia/Shanghai"
+        "cron": "Quartz cron；只要 schedule_type 不是 none 就必须填写",
+        "timezone": "Asia/Shanghai",
+        "next_run_at": "下一次触发时间，ISO-8601，没有则 null",
+        "last_run_at": null,
+        "trigger_count": 0
       },
       "args": {},
       "priority": "low | normal | high",
@@ -59,11 +62,12 @@ JSON 必须符合以下结构：
 1. 一句话里有多个动作时必须拆成多个 tasks。
 2. action_type 必须选择当前可用 Skills 中最匹配的 actionType；skill_name 必须填写对应 Skill 的 name。
 3. 发送、回复、对外通知类任务必须 requires_confirmation=true；如果 Skill 的 requiresConfirmation=true，也必须返回 true。
-4. 没有明确时间的任务 schedule_type=none。
-5. 一次性时间用 run_at，周期时间用 cron。
-6. 不确定的对象 target_type=unknown，并把问题写入 warnings。
-7. 当前日期是 {current_date}，用户时区是 {timezone_name}。
-8. 如果 Skill 的 inputSchema 中出现额外业务参数，请放入 args，例如 location、date、file_path、subject 等。
+4. 没有明确时间的任务 schedule_type=none，cron=null。
+5. 只要判定为需要调度的任务，必须体现 cron 表达式：一次性任务 schedule_type=once 时同时填写 run_at 和一次性 Quartz cron，格式如 0 0 15 29 5 ? 2026；周期任务 schedule_type=recurring 时填写周期 cron，格式如 0 0 10 ? * FRI。
+6. 一次性任务 next_run_at 与 run_at 保持一致；周期任务 next_run_at 可以为 null，由 Java 服务计算。
+7. 不确定的对象 target_type=unknown，并把问题写入 warnings。
+8. 当前日期是 {current_date}，用户时区是 {timezone_name}。
+9. 如果 Skill 的 inputSchema 中出现额外业务参数，请放入 args，例如 location、date、file_path、subject 等。
 
 对象和内容边界规则，必须严格遵守：
 1. target.name 只能是人名、群名、邮箱名、组织名，不能包含动作或任务内容。
@@ -81,10 +85,10 @@ JSON 必须符合以下结构：
 
 示例：
 输入：明天下午三点提醒我给李雷确认合同盖章
-输出任务：skill_name=reminder, action_type=reminder, target.name=李雷, content=确认合同盖章, schedule.original_text=明天下午三点
+输出任务：skill_name=reminder, action_type=reminder, target.name=李雷, content=确认合同盖章, schedule.original_text=明天下午三点, schedule.run_at=具体ISO时间, schedule.cron=一次性Quartz cron
 
 输入：下周一上午九点提醒我整理本月项目进度
-输出任务：skill_name=reminder, action_type=reminder, target.target_type=unknown, target.name=null, content=整理本月项目进度
+输出任务：skill_name=reminder, action_type=reminder, target.target_type=unknown, target.name=null, content=整理本月项目进度, schedule.cron=一次性Quartz cron
 
 输入：如果系统里还有状态停留在“处理中”超过三十分钟的单据，就提醒我联系李雷一起排查
 输出任务：skill_name=reminder, action_type=reminder, target.name=李雷, content=联系李雷一起排查，不要直接重跑任务
