@@ -1,0 +1,27 @@
+name: schedule_task
+displayName: 定时任务
+description: 用户要求每天、每周、每月等周期性执行某个任务时使用。
+triggerKeywords:
+  - 每天
+  - 每周
+  - 每月
+  - 定期
+  - 周期
+actionType: schedule_task
+riskLevel: MEDIUM
+requiresConfirmation: false
+inputSchema:
+  type: object
+  required:
+    - content
+    - schedule
+  properties:
+    content:
+      type: string
+      description: 周期任务内容
+    schedule:
+      type: object
+      description: 周期调度配置
+execution:
+  type: builtin
+  executor: schedule
