@@ -1,5 +1,6 @@
 package com.kailei.demo.repository;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kailei.demo.entity.TaskExecutionLogEntity;
@@ -8,6 +9,7 @@ import com.kailei.demo.model.TaskAction;
 import org.springframework.stereotype.Repository;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -63,6 +65,19 @@ public class TaskExecutionLogRepository {
                 ),
                 after.status().name().equals("FAILED") ? after.executionNote() : null
         );
+    }
+
+    public List<TaskExecutionLogEntity> findByPlanId(String planId) {
+        return mapper.selectList(new LambdaQueryWrapper<TaskExecutionLogEntity>()
+                .eq(TaskExecutionLogEntity::getPlanId, planId)
+                .orderByDesc(TaskExecutionLogEntity::getCreatedAt));
+    }
+
+    public List<TaskExecutionLogEntity> findByPlanIdAndActionId(String planId, String actionId) {
+        return mapper.selectList(new LambdaQueryWrapper<TaskExecutionLogEntity>()
+                .eq(TaskExecutionLogEntity::getPlanId, planId)
+                .eq(TaskExecutionLogEntity::getActionId, actionId)
+                .orderByDesc(TaskExecutionLogEntity::getCreatedAt));
     }
 
     private String writeJson(Object value) {
