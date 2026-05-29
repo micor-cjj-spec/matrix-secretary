@@ -11,6 +11,17 @@ spring:
     url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/ai_secretary_demo?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
     username: ${MYSQL_USERNAME:ai_demo}
     password: ${MYSQL_PASSWORD:ai_demo_123}
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
 
 mybatis-plus:
   configuration:
@@ -26,3 +37,6 @@ auto-table:
 ai-secretary:
   python-semantic-url: ${PYTHON_SEMANTIC_URL:http://127.0.0.1:10001/api/v1/semantic/parse}
   api-key: ${AI_SECRETARY_API_KEY:}
+  email:
+    send-enabled: ${EMAIL_SEND_ENABLED:false}
+    test-recipient: ${EMAIL_TEST_RECIPIENT:}
