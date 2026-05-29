@@ -27,7 +27,7 @@ public class EmailDraftRepository {
         draft.setActionId(action.actionId());
         draft.setRecipientName(action.target() == null ? null : action.target().name());
         draft.setRecipientAddress(action.target() == null ? null : action.target().address());
-        draft.setSubject(action.args() != null && action.args().containsKey("subject") ? action.args().get("subject").toString() : "无主题");
+        draft.setSubject(resolveSubject(action));
         draft.setBody(action.content());
         draft.setStatus("DRAFT");
         draft.setCreatedAt(OffsetDateTime.now());
@@ -43,13 +43,28 @@ public class EmailDraftRepository {
     }
 
     public EmailDraftEntity markSent(String draftId, String userId) {
+        return updateStatus(draftId, userId, "SENT");
+    }
+
+    public EmailDraftEntity markFailed(String draftId, String userId) {
+        return updateStatus(draftId, userId, "FAILED");
+    }
+
+    private EmailDraftEntity updateStatus(String draftId, String userId, String status) {
         EmailDraftEntity draft = mapper.selectById(draftId);
         if (draft == null || !draft.getUserId().equals(userId)) {
             throw new IllegalArgumentException("草稿不存在或无权访问: " + draftId);
         }
-        draft.setStatus("SENT");
+        draft.setStatus(status);
         draft.setUpdatedAt(OffsetDateTime.now());
         mapper.updateById(draft);
         return draft;
+    }
+
+    private String resolveSubject(TaskAction action) {
+        if (action.args() != null && action.args().containsKey("subject") && action.args().get("subject") != null) {
+            return action.args().get("subject").toString();
+        }
+        return action.title() == null || action.title().isBlank() ? "AI秘书邮件" : action.title();
     }
 }
