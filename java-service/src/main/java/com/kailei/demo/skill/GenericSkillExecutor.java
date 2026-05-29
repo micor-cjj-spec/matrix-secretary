@@ -1,9 +1,11 @@
 package com.kailei.demo.skill;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kailei.demo.entity.EmailDraftEntity;
 import com.kailei.demo.entity.NotificationEntity;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskStatus;
+import com.kailei.demo.repository.EmailDraftRepository;
 import com.kailei.demo.repository.NotificationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,13 +25,16 @@ public class GenericSkillExecutor {
     private final SkillTemplateRenderer renderer;
     private final SkillArgumentValidator validator = new SkillArgumentValidator();
     private final NotificationRepository notificationRepository;
+    private final EmailDraftRepository emailDraftRepository;
 
     public GenericSkillExecutor(RestClient restClient,
                                 ObjectMapper objectMapper,
-                                NotificationRepository notificationRepository) {
+                                NotificationRepository notificationRepository,
+                                EmailDraftRepository emailDraftRepository) {
         this.restClient = restClient;
         this.renderer = new SkillTemplateRenderer(objectMapper);
         this.notificationRepository = notificationRepository;
+        this.emailDraftRepository = emailDraftRepository;
     }
 
     public TaskAction execute(String planId, String userId, SkillDefinition skill, TaskAction action) {
@@ -53,7 +58,7 @@ public class GenericSkillExecutor {
         return switch (executor == null ? "" : executor) {
             case "reminder" -> createNotification(planId, userId, action, "REMINDER", "已创建站内提醒");
             case "todo" -> createNotification(planId, userId, action, "TODO", "已创建站内待办");
-            case "email" -> mockExecuted(skill, action, "模拟发送邮件: " + action.content());
+            case "email" -> createEmailDraft(planId, userId, action);
             case "message" -> mockExecuted(skill, action, "模拟发送消息: " + action.content());
             case "reply" -> mockExecuted(skill, action, "模拟回复消息: " + action.content());
             case "schedule" -> mockExecuted(skill, action, "模拟创建定时任务: " + action.content());
@@ -68,6 +73,19 @@ public class GenericSkillExecutor {
         NotificationEntity notification = notificationRepository.createFromAction(userId, planId, action, type);
         String note = prefix + ": notificationId=" + notification.getId();
         log.info("Create notification [{}] for action [{}] user [{}]", notification.getId(), action.actionId(), userId);
+        return action.withStatus(TaskStatus.EXECUTED, note);
+    }
+
+    private TaskAction createEmailDraft(String planId, String userId, TaskAction action) {
+        if (userId == null || userId.isBlank()) {
+            return action.withStatus(TaskStatus.FAILED, "创建邮件草稿失败: 缺少 userId");
+        }
+        EmailDraftEntity draft = emailDraftRepository.createDraft(userId, planId, action);
+        String note = "已创建邮件草稿: draftId=" + draft.getId();
+        if (draft.getRecipientAddress() == null || draft.getRecipientAddress().isBlank()) {
+            note += ", 收件人地址待补充";
+        }
+        log.info("Create email draft [{}] for action [{}] user [{}]", draft.getId(), action.actionId(), userId);
         return action.withStatus(TaskStatus.EXECUTED, note);
     }
 
