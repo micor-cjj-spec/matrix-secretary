@@ -8,11 +8,18 @@
   -> Python 能力服务: 语义识别、任务拆解、时间归一化、cron 表达式生成
 ```
 
+## 项目文档
+
+- [AI Secretary 架构演进与改造规则](docs/AI_SECRETARY_EVOLUTION_PLAN.md)
+
+该文档约束后续改造方向：项目不应被改造成普通聊天机器人，而应演进为可确认、可调度、可审计、可扩展 Skill 的 AI 秘书任务执行系统。
+
 ## 目录结构
 
 ```text
 java-service/      Spring Boot 主控服务
 python-service/    FastAPI 语义解析服务
+docs/              项目架构与演进文档
 ```
 
 ## 职责边界
@@ -128,6 +135,7 @@ com.kailei.demo.entity.TaskExecutionLogEntity -> ai_task_execution_log
 $env:MYSQL_URL="jdbc:mysql://127.0.0.1:3306/ai_secretary_demo?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true"
 $env:MYSQL_USERNAME="ai_demo"
 $env:MYSQL_PASSWORD="ai_demo_123"
+$env:PYTHON_SEMANTIC_URL="http://127.0.0.1:10001/api/v1/semantic/parse"
 ```
 
 如果日志出现 `Communications link failure` 或 `Connection refused`，说明 MySQL 没有启动或没有监听 `3306`。先确认：
@@ -149,6 +157,13 @@ Java 页面：
 http://127.0.0.1:10002
 ```
 
+OpenAPI 文档：
+
+```text
+http://127.0.0.1:10002/v3/api-docs
+http://127.0.0.1:10002/swagger-ui/index.html
+```
+
 Java 接口：
 
 ```text
@@ -157,6 +172,8 @@ POST http://127.0.0.1:10002/api/ai-task/preview
 POST http://127.0.0.1:10002/api/ai-task/{planId}/confirm
 GET  http://127.0.0.1:10002/api/ai-task/{planId}
 GET  http://127.0.0.1:10002/api/ai-task
+GET  http://127.0.0.1:10002/api/ai-task/{planId}/logs
+GET  http://127.0.0.1:10002/api/ai-task/{planId}/actions/{actionId}/logs
 ```
 
 ## 示例请求
@@ -223,7 +240,12 @@ WAITING_CONFIRM
 
 ## 后续演进
 
-- 将规则 fallback 继续弱化为兜底，主路径使用 LLM structured output。
-- 将调度执行替换为 XXL-Job / Quartz / MQ 延迟队列。
-- 增加联系人消歧、权限校验、审计查询和失败重试。
-- 增加 HTTP Skill URL 白名单、敏感参数脱敏、Skill 安全扫描。
+详细规则见 [AI Secretary 架构演进与改造规则](docs/AI_SECRETARY_EVOLUTION_PLAN.md)。
+
+近期重点：
+
+- 增加任务编辑、取消、重试能力。
+- 增加 API Key / JWT 鉴权和 userId 数据隔离。
+- 将模拟执行器替换为真实邮件、提醒、待办、消息执行器。
+- 增强调度幂等、失败重试、超时恢复和 HTTP Skill 安全策略。
+- 后续按需引入 Spring AI、Dify、n8n、MCP 等辅助能力，但核心任务状态机继续沉淀在 Java 服务。
