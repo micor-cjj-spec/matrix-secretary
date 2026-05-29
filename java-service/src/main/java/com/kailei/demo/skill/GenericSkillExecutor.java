@@ -7,6 +7,7 @@ import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskStatus;
 import com.kailei.demo.repository.EmailDraftRepository;
 import com.kailei.demo.repository.NotificationRepository;
+import com.kailei.demo.service.EmailSandboxService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -26,15 +27,18 @@ public class GenericSkillExecutor {
     private final SkillArgumentValidator validator = new SkillArgumentValidator();
     private final NotificationRepository notificationRepository;
     private final EmailDraftRepository emailDraftRepository;
+    private final EmailSandboxService emailSandboxService;
 
     public GenericSkillExecutor(RestClient restClient,
                                 ObjectMapper objectMapper,
                                 NotificationRepository notificationRepository,
-                                EmailDraftRepository emailDraftRepository) {
+                                EmailDraftRepository emailDraftRepository,
+                                EmailSandboxService emailSandboxService) {
         this.restClient = restClient;
         this.renderer = new SkillTemplateRenderer(objectMapper);
         this.notificationRepository = notificationRepository;
         this.emailDraftRepository = emailDraftRepository;
+        this.emailSandboxService = emailSandboxService;
     }
 
     public TaskAction execute(String planId, String userId, SkillDefinition skill, TaskAction action) {
@@ -58,7 +62,7 @@ public class GenericSkillExecutor {
         return switch (executor == null ? "" : executor) {
             case "reminder" -> createNotification(planId, userId, action, "REMINDER", "已创建站内提醒");
             case "todo" -> createNotification(planId, userId, action, "TODO", "已创建站内待办");
-            case "email" -> createEmailDraft(planId, userId, action);
+            case "email" -> createEmailDraftAndMaybeSend(planId, userId, action);
             case "message" -> mockExecuted(skill, action, "模拟发送消息: " + action.content());
             case "reply" -> mockExecuted(skill, action, "模拟回复消息: " + action.content());
             case "schedule" -> mockExecuted(skill, action, "模拟创建定时任务: " + action.content());
@@ -76,16 +80,24 @@ public class GenericSkillExecutor {
         return action.withStatus(TaskStatus.EXECUTED, note);
     }
 
-    private TaskAction createEmailDraft(String planId, String userId, TaskAction action) {
+    private TaskAction createEmailDraftAndMaybeSend(String planId, String userId, TaskAction action) {
         if (userId == null || userId.isBlank()) {
             return action.withStatus(TaskStatus.FAILED, "创建邮件草稿失败: 缺少 userId");
         }
         EmailDraftEntity draft = emailDraftRepository.createDraft(userId, planId, action);
-        String note = "已创建邮件草稿: draftId=" + draft.getId();
-        if (draft.getRecipientAddress() == null || draft.getRecipientAddress().isBlank()) {
-            note += ", 收件人地址待补充";
+        EmailSandboxService.SendResult sendResult = emailSandboxService.sendDraftToSandbox(draft);
+        if (sendResult.attempted() && sendResult.sent()) {
+            emailDraftRepository.markSent(draft.getId(), userId);
+        } else if (sendResult.attempted()) {
+            emailDraftRepository.markFailed(draft.getId(), userId);
+            return action.withStatus(TaskStatus.FAILED, "邮件草稿已创建但发送失败: draftId=" + draft.getId() + ", " + sendResult.message());
         }
-        log.info("Create email draft [{}] for action [{}] user [{}]", draft.getId(), action.actionId(), userId);
+
+        String note = "已创建邮件草稿: draftId=" + draft.getId() + ", " + sendResult.message();
+        if (draft.getRecipientAddress() == null || draft.getRecipientAddress().isBlank()) {
+            note += ", 解析收件人地址为空但测试模式会发往沙箱收件人";
+        }
+        log.info("Create email draft [{}] for action [{}] user [{}] sendResult={}", draft.getId(), action.actionId(), userId, sendResult.message());
         return action.withStatus(TaskStatus.EXECUTED, note);
     }
 
