@@ -1,9 +1,11 @@
 package com.kailei.demo.controller;
 
+import com.kailei.demo.entity.TaskExecutionLogEntity;
 import com.kailei.demo.model.ConfirmTaskRequest;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.TaskPlan;
+import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.service.AiTaskService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,9 +22,12 @@ import java.util.List;
 public class AiTaskController {
 
     private final AiTaskService aiTaskService;
+    private final TaskExecutionLogRepository executionLogRepository;
 
-    public AiTaskController(AiTaskService aiTaskService) {
+    public AiTaskController(AiTaskService aiTaskService,
+                            TaskExecutionLogRepository executionLogRepository) {
         this.aiTaskService = aiTaskService;
+        this.executionLogRepository = executionLogRepository;
     }
 
     @PostMapping("/preview")
@@ -40,6 +45,17 @@ public class AiTaskController {
     @GetMapping("/{planId}")
     public TaskPlan get(@PathVariable String planId) {
         return aiTaskService.get(planId);
+    }
+
+    @GetMapping("/{planId}/logs")
+    public List<TaskExecutionLogEntity> logs(@PathVariable String planId) {
+        return executionLogRepository.findByPlanId(planId);
+    }
+
+    @GetMapping("/{planId}/actions/{actionId}/logs")
+    public List<TaskExecutionLogEntity> actionLogs(@PathVariable String planId,
+                                                   @PathVariable String actionId) {
+        return executionLogRepository.findByPlanIdAndActionId(planId, actionId);
     }
 
     @GetMapping
