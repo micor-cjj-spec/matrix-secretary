@@ -66,6 +66,15 @@ public class TaskPlanRepository {
                 .toList();
     }
 
+    public List<TaskPlan> findByUserId(String userId) {
+        return taskPlanMapper.selectList(new LambdaQueryWrapper<TaskPlanEntity>()
+                        .eq(TaskPlanEntity::getUserId, userId)
+                        .orderByDesc(TaskPlanEntity::getCreatedAt))
+                .stream()
+                .map(planEntity -> toDomain(planEntity, findActions(planEntity.getPlanId())))
+                .toList();
+    }
+
     private List<TaskActionEntity> findActions(String planId) {
         return taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
                 .eq(TaskActionEntity::getPlanId, planId)
