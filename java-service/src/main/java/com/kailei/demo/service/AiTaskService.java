@@ -121,10 +121,10 @@ public class AiTaskService {
 
         String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
         List<TaskAction> nextActions = plan.tasks().stream()
-                .map(action -> executionService.confirmAction(plan.planId(), action, effectiveOperator))
+                .map(action -> executionService.confirmAction(plan.planId(), plan.userId(), action, effectiveOperator))
                 .toList();
 
-        TaskPlan nextPlan = plan.withStatus(TaskStatus.CONFIRMED, nextActions);
+        TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
         repository.save(nextPlan);
         return new ConfirmTaskResponse(nextPlan.planId(), nextPlan.status(), summarize(nextPlan.tasks()), nextPlan);
     }
@@ -171,7 +171,7 @@ public class AiTaskService {
             if (action.status() != TaskStatus.FAILED) {
                 throw new IllegalArgumentException("只有 FAILED 状态的动作允许重试: " + actionId);
             }
-            nextActions.add(executionService.executeNow(plan.planId(), action, effectiveOperator));
+            nextActions.add(executionService.executeNow(plan.planId(), plan.userId(), action, effectiveOperator));
         }
         if (!matched) {
             throw new IllegalArgumentException("任务动作不存在: " + actionId);
@@ -207,7 +207,7 @@ public class AiTaskService {
         OffsetDateTime now = OffsetDateTime.now();
         repository.findAll().forEach(plan -> {
             List<TaskAction> nextActions = plan.tasks().stream()
-                    .map(action -> dispatchIfDue(plan.planId(), action, now))
+                    .map(action -> dispatchIfDue(plan, action, now))
                     .toList();
             if (!nextActions.equals(plan.tasks())) {
                 repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
@@ -253,7 +253,7 @@ public class AiTaskService {
         return new ExecutionSummary(executed, scheduled, failed);
     }
 
-    private TaskAction dispatchIfDue(String planId, TaskAction action, OffsetDateTime now) {
+    private TaskAction dispatchIfDue(TaskPlan plan, TaskAction action, OffsetDateTime now) {
         if (action.status() != TaskStatus.SCHEDULED || action.schedule() == null) {
             return action;
         }
@@ -267,7 +267,7 @@ public class AiTaskService {
                 return action.withSchedule(schedule);
             }
             TaskAction executable = action.withSchedule(schedule);
-            TaskAction executed = executionService.executeNow(planId, executable, SYSTEM_OPERATOR);
+            TaskAction executed = executionService.executeNow(plan.planId(), plan.userId(), executable, SYSTEM_OPERATOR);
             if (schedule.isRecurring() && executed.status() == TaskStatus.EXECUTED) {
                 TaskSchedule nextSchedule = cronScheduleService.markTriggered(schedule, now);
                 String note = "周期任务已执行，下一次触发: cron=" + nextSchedule.cron()
