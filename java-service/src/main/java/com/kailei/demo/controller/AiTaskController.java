@@ -68,13 +68,17 @@ public class AiTaskController {
     }
 
     @GetMapping("/{planId}/logs")
-    public List<TaskExecutionLogEntity> logs(@PathVariable String planId) {
+    public List<TaskExecutionLogEntity> logs(@PathVariable String planId,
+                                             @RequestParam(required = false) String userId) {
+        aiTaskService.get(planId, userId);
         return executionLogRepository.findByPlanId(planId);
     }
 
     @GetMapping("/{planId}/actions/{actionId}/logs")
     public List<TaskExecutionLogEntity> actionLogs(@PathVariable String planId,
-                                                   @PathVariable String actionId) {
+                                                   @PathVariable String actionId,
+                                                   @RequestParam(required = false) String userId) {
+        aiTaskService.get(planId, userId);
         return executionLogRepository.findByPlanIdAndActionId(planId, actionId);
     }
 
