@@ -24,4 +24,4 @@ auto-table:
   model-package: com.kailei.demo.entity
 
 ai-secretary:
-  python-semantic-url: http://127.0.0.1:10001/api/v1/semantic/parse
+  python-semantic-url: ${PYTHON_SEMANTIC_URL:http://127.0.0.1:10001/api/v1/semantic/parse}
