@@ -143,7 +143,7 @@ async def parse_text_with_llm_with_diagnostics(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=120, trust_env=settings.llm_trust_env) as client:
             response = await client.post(
                 f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
                 headers=headers,

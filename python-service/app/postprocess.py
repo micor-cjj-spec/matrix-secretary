@@ -1,5 +1,6 @@
 import re
 
+from app.parser import cron_from_run_at, infer_once_time
 from app.schemas import ActionType, ParseResponse, ScheduleType, TaskAction, TaskSchedule, TaskTarget
 
 
@@ -149,11 +150,31 @@ def normalize_action_type(task: TaskAction, source: str) -> ActionType:
 
 
 def normalize_schedule(schedule: TaskSchedule, source: str) -> TaskSchedule:
+    fixed_once = normalize_once_schedule_from_source(schedule, source)
+    if fixed_once:
+        return fixed_once
     if schedule.schedule_type != ScheduleType.NONE or schedule.original_text:
         return schedule
     if is_conditional_trigger(source):
         return schedule.model_copy(update={"original_text": "条件触发/待确认"})
     return schedule
+
+
+def normalize_once_schedule_from_source(schedule: TaskSchedule, source: str) -> TaskSchedule | None:
+    if schedule.schedule_type != ScheduleType.ONCE:
+        return None
+    time_source = source or schedule.original_text or ""
+    if not re.search(r"(分钟后|小时后|天后)", time_source):
+        return None
+    run_at, original_text = infer_once_time(time_source)
+    if not run_at:
+        return None
+    return schedule.model_copy(update={
+        "original_text": original_text or schedule.original_text,
+        "run_at": run_at,
+        "cron": cron_from_run_at(run_at),
+        "next_run_at": run_at,
+    })
 
 
 def normalize_target(task: TaskAction, source: str) -> TaskTarget:
@@ -201,6 +222,10 @@ def normalize_content(task: TaskAction, source: str, target: TaskTarget) -> str:
         return cleanup_content(original_target_name)
 
     if task.content:
+        if task.action_type == ActionType.REMINDER:
+            reminder_content = cleanup_reminder_content(task.content)
+            if reminder_content:
+                return reminder_content
         if is_invalid_target_name(original_target_name):
             cleaned_target = cleanup_content(original_target_name)
             if cleaned_target and cleaned_target in task.content:
@@ -490,3 +515,10 @@ def cleanup_content(value: str) -> str:
     value = value.strip(" ，,。；;：:")
     value = re.sub(r"^(发邮件|发消息|回复|通知|提醒|让|给)", "", value)
     return value.strip(" ，,。；;：:")
+
+
+def cleanup_reminder_content(value: str) -> str:
+    text = cleanup_content(value)
+    text = re.sub(r"^.*?(?:分钟后|小时后|天后)", "", text)
+    text = re.sub(r"^(?:提醒我|提醒|叫我|让我)", "", text)
+    return cleanup_content(text)

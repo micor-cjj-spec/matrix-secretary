@@ -29,12 +29,20 @@ async def index() -> str:
 @app.post("/api/v1/semantic/parse", response_model=ParseResponse)
 async def parse_semantic_task(request: ParseRequest) -> ParseResponse:
     llm_result = await parse_text_with_llm_with_diagnostics(request.text, request.timezone, request.trace_id)
-    if llm_result.response:
+    if llm_result.response and llm_result.response.tasks:
         return safe_normalize_parse_response(llm_result.response, parser_source="llm")
-    fallback = parse_text(request.text, request.timezone, request.trace_id, allow_complex=False)
+    allow_complex_fallback = bool(llm_result.response and not llm_result.response.tasks)
+    fallback = parse_text(
+        request.text,
+        request.timezone,
+        request.trace_id,
+        allow_complex=allow_complex_fallback,
+    )
     warnings = [*fallback.warnings]
     if llm_result.warning:
         warnings.insert(0, llm_result.warning)
+    elif llm_result.response and not llm_result.response.tasks:
+        warnings.insert(0, "LLM 未生成可执行任务，已使用规则 fallback 解析。")
     fallback = fallback.model_copy(update={"warnings": warnings})
     return safe_normalize_parse_response(fallback, parser_source="fallback", parse_warning=llm_result.warning)
 
