@@ -138,6 +138,24 @@ $env:MYSQL_PASSWORD="ai_demo_123"
 $env:PYTHON_SEMANTIC_URL="http://127.0.0.1:10001/api/v1/semantic/parse"
 ```
 
+如果需要启用 Java API 鉴权，再设置：
+
+```powershell
+$env:AI_SECRETARY_API_KEY="your-secret-key"
+```
+
+不设置 `AI_SECRETARY_API_KEY` 时默认不启用鉴权，便于本地开发。启用后，所有 `/api/**` 请求需要带以下任意一种请求头：
+
+```http
+X-AI-Secretary-Key: your-secret-key
+```
+
+或：
+
+```http
+Authorization: Bearer your-secret-key
+```
+
 如果日志出现 `Communications link failure` 或 `Connection refused`，说明 MySQL 没有启动或没有监听 `3306`。先确认：
 
 ```powershell
@@ -170,10 +188,12 @@ Java 接口：
 GET  http://127.0.0.1:10002/api/skills
 POST http://127.0.0.1:10002/api/ai-task/preview
 POST http://127.0.0.1:10002/api/ai-task/{planId}/confirm
-GET  http://127.0.0.1:10002/api/ai-task/{planId}
-GET  http://127.0.0.1:10002/api/ai-task
-GET  http://127.0.0.1:10002/api/ai-task/{planId}/logs
-GET  http://127.0.0.1:10002/api/ai-task/{planId}/actions/{actionId}/logs
+POST http://127.0.0.1:10002/api/ai-task/{planId}/cancel
+POST http://127.0.0.1:10002/api/ai-task/{planId}/actions/{actionId}/retry
+GET  http://127.0.0.1:10002/api/ai-task/{planId}?userId=demo-user
+GET  http://127.0.0.1:10002/api/ai-task?userId=demo-user
+GET  http://127.0.0.1:10002/api/ai-task/{planId}/logs?userId=demo-user
+GET  http://127.0.0.1:10002/api/ai-task/{planId}/actions/{actionId}/logs?userId=demo-user
 ```
 
 ## 示例请求
@@ -221,6 +241,33 @@ Content-Type: application/json
 }
 ```
 
+取消未执行任务：
+
+```http
+POST /api/ai-task/{planId}/cancel
+Content-Type: application/json
+```
+
+```json
+{
+  "operatorUserId": "demo-user",
+  "reason": "用户主动取消"
+}
+```
+
+重试失败动作：
+
+```http
+POST /api/ai-task/{planId}/actions/{actionId}/retry
+Content-Type: application/json
+```
+
+```json
+{
+  "operatorUserId": "demo-user"
+}
+```
+
 ## 状态流转
 
 ```text
@@ -229,6 +276,7 @@ WAITING_CONFIRM
   -> EXECUTED   立即任务 / 到点后的一次性任务
   -> SCHEDULED  一次性/周期任务等待触发
   -> FAILED     执行、参数校验或时间解析失败
+  -> CANCELLED  用户取消未执行任务
 ```
 
 调度说明：
