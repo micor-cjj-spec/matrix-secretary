@@ -12,7 +12,7 @@ spring:
     username: ${MYSQL_USERNAME:ai_demo}
     password: ${MYSQL_PASSWORD:ai_demo_123}
   mail:
-    host: ${MAIL_HOST:smtp.gmail.com}
+    host: ${MAIL_HOST:smtp.qq.com}
     port: ${MAIL_PORT:587}
     username: ${MAIL_USERNAME:micor.cjj@qq.com}
     password: ${MAIL_PASSWORD:wzveeooccjokdjia}
@@ -21,7 +21,9 @@ spring:
         smtp:
           auth: true
           starttls:
-            enable: true
+            enable: ${MAIL_SMTP_STARTTLS_ENABLE:true}
+          ssl:
+            enable: ${MAIL_SMTP_SSL_ENABLE:false}
 
 mybatis-plus:
   configuration:
