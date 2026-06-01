@@ -14,8 +14,8 @@ spring:
   mail:
     host: ${MAIL_HOST:smtp.gmail.com}
     port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:micor.cjj@gmail.com}
-    password: ${MAIL_PASSWORD:wawzdbxbhxuujygj}
+    username: ${MAIL_USERNAME:micor.cjj@qq.com}
+    password: ${MAIL_PASSWORD:wzveeooccjokdjia}
     properties:
       mail:
         smtp:
@@ -39,4 +39,4 @@ ai-secretary:
   api-key: ${AI_SECRETARY_API_KEY:}
   email:
     send-enabled: ${EMAIL_SEND_ENABLED:true}
-    test-recipient: ${EMAIL_TEST_RECIPIENT:micor.cjj@qq.com}
+    test-recipient: ${EMAIL_TEST_RECIPIENT:micor.cjj@gmail.com}
