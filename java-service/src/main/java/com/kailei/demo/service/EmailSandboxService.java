@@ -33,26 +33,37 @@ public class EmailSandboxService {
         if (!sendEnabled) {
             return SendResult.skipped("邮件发送未启用，已仅创建草稿");
         }
-        if (testRecipient.isBlank()) {
-            return SendResult.failed("邮件沙箱收件人未配置: EMAIL_TEST_RECIPIENT");
-        }
         if (mailUsername.isBlank()) {
             return SendResult.failed("邮件发送账号未配置: MAIL_USERNAME");
         }
+        String recipient = testRecipient.isBlank() ? mailUsername : testRecipient;
 
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom(mailUsername);
-        message.setTo(testRecipient);
+        message.setTo(recipient);
         message.setSubject(safeSubject(draft));
         message.setText(buildSandboxBody(draft));
         try {
             mailSender.send(message);
-            log.info("Sandbox email sent, draftId={}, testRecipient={}", draft.getId(), testRecipient);
-            return SendResult.sent("测试邮件已发送到: " + testRecipient);
+            log.info("Sandbox email sent, draftId={}, recipient={}", draft.getId(), recipient);
+            return SendResult.sent("测试邮件已发送到: " + recipient + recipientNote());
         } catch (MailException ex) {
             log.warn("Sandbox email send failed, draftId={}", draft.getId(), ex);
-            return SendResult.failed("测试邮件发送失败: " + ex.getClass().getSimpleName());
+            return SendResult.failed("测试邮件发送失败: " + ex.getClass().getSimpleName() + rootCauseMessage(ex));
         }
+    }
+
+    private String recipientNote() {
+        return testRecipient.isBlank() ? "（未配置 EMAIL_TEST_RECIPIENT，已发送到发件账号自身）" : "";
+    }
+
+    private String rootCauseMessage(Throwable ex) {
+        Throwable cursor = ex;
+        while (cursor.getCause() != null) {
+            cursor = cursor.getCause();
+        }
+        String message = cursor.getMessage();
+        return message == null || message.isBlank() ? "" : "，原因: " + message;
     }
 
     private String safeSubject(EmailDraftEntity draft) {

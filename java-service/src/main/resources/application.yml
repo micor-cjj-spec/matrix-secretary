@@ -15,7 +15,7 @@ spring:
     host: ${MAIL_HOST:smtp.gmail.com}
     port: ${MAIL_PORT:587}
     username: ${MAIL_USERNAME:micor.cjj@gmail.com}
-    password: ${MAIL_PASSWORD:10086117qwer}
+    password: ${MAIL_PASSWORD:wawzdbxbhxuujygj}
     properties:
       mail:
         smtp:
@@ -38,5 +38,5 @@ ai-secretary:
   python-semantic-url: ${PYTHON_SEMANTIC_URL:http://127.0.0.1:10001/api/v1/semantic/parse}
   api-key: ${AI_SECRETARY_API_KEY:}
   email:
-    send-enabled: ${EMAIL_SEND_ENABLED:false}
-    test-recipient: ${EMAIL_TEST_RECIPIENT:}
+    send-enabled: ${EMAIL_SEND_ENABLED:true}
+    test-recipient: ${EMAIL_TEST_RECIPIENT:micor.cjj@qq.com}
