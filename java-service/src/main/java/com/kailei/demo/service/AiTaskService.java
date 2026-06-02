@@ -8,6 +8,7 @@ import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.model.TaskSchedule;
 import com.kailei.demo.model.TaskStatus;
+import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.repository.TaskPlanRepository;
 import com.kailei.demo.skill.SkillCatalog;
 import com.kailei.demo.skill.SkillDefinition;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.IntStream;
@@ -29,17 +31,20 @@ public class AiTaskService {
     private final TaskExecutionService executionService;
     private final SkillCatalog skillCatalog;
     private final CronScheduleService cronScheduleService;
+    private final TaskExecutionLogRepository executionLogRepository;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
                          TaskExecutionService executionService,
                          SkillCatalog skillCatalog,
-                         CronScheduleService cronScheduleService) {
+                         CronScheduleService cronScheduleService,
+                         TaskExecutionLogRepository executionLogRepository) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
         this.skillCatalog = skillCatalog;
         this.cronScheduleService = cronScheduleService;
+        this.executionLogRepository = executionLogRepository;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
@@ -114,14 +119,64 @@ public class AiTaskService {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
 
-        String effectiveOperator = operatorUserId == null || operatorUserId.isBlank()
-                ? plan.userId()
-                : operatorUserId;
+        String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
         List<TaskAction> nextActions = plan.tasks().stream()
-                .map(action -> executionService.confirmAction(plan.planId(), action, effectiveOperator))
+                .map(action -> executionService.confirmAction(plan.planId(), plan.userId(), action, effectiveOperator))
                 .toList();
 
-        TaskPlan nextPlan = plan.withStatus(TaskStatus.CONFIRMED, nextActions);
+        TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
+        repository.save(nextPlan);
+        return new ConfirmTaskResponse(nextPlan.planId(), nextPlan.status(), summarize(nextPlan.tasks()), nextPlan);
+    }
+
+    public ConfirmTaskResponse cancel(String planId, String operatorUserId, String reason) {
+        TaskPlan plan = get(planId);
+        if (plan.status() == TaskStatus.CANCELLED) {
+            return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
+        }
+        boolean hasExecutedAction = plan.tasks().stream()
+                .anyMatch(action -> action.status() == TaskStatus.EXECUTED);
+        if (hasExecutedAction) {
+            throw new IllegalArgumentException("任务已存在已执行动作，不能整体取消: " + planId);
+        }
+
+        String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
+        String cancelReason = reason == null || reason.isBlank() ? "用户主动取消" : reason;
+        List<TaskAction> nextActions = plan.tasks().stream()
+                .map(action -> {
+                    if (action.status() == TaskStatus.CANCELLED) {
+                        return action;
+                    }
+                    TaskAction next = action.withStatus(TaskStatus.CANCELLED, "任务已取消: " + cancelReason);
+                    executionLogRepository.logStateChange(plan.planId(), action, next, effectiveOperator);
+                    return next;
+                })
+                .toList();
+        TaskPlan nextPlan = plan.withStatus(TaskStatus.CANCELLED, nextActions);
+        repository.save(nextPlan);
+        return new ConfirmTaskResponse(nextPlan.planId(), nextPlan.status(), summarize(nextPlan.tasks()), nextPlan);
+    }
+
+    public ConfirmTaskResponse retryAction(String planId, String actionId, String operatorUserId) {
+        TaskPlan plan = get(planId);
+        String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
+        List<TaskAction> nextActions = new ArrayList<>();
+        boolean matched = false;
+        for (TaskAction action : plan.tasks()) {
+            if (!action.actionId().equals(actionId)) {
+                nextActions.add(action);
+                continue;
+            }
+            matched = true;
+            if (action.status() != TaskStatus.FAILED) {
+                throw new IllegalArgumentException("只有 FAILED 状态的动作允许重试: " + actionId);
+            }
+            nextActions.add(executionService.executeNow(plan.planId(), plan.userId(), action, effectiveOperator));
+        }
+        if (!matched) {
+            throw new IllegalArgumentException("任务动作不存在: " + actionId);
+        }
+        TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
         repository.save(nextPlan);
         return new ConfirmTaskResponse(nextPlan.planId(), nextPlan.status(), summarize(nextPlan.tasks()), nextPlan);
     }
@@ -131,20 +186,64 @@ public class AiTaskService {
                 .orElseThrow(() -> new IllegalArgumentException("任务计划不存在: " + planId));
     }
 
+    public TaskPlan get(String planId, String userId) {
+        TaskPlan plan = get(planId);
+        ensureSameUser(plan, userId);
+        return plan;
+    }
+
+    public List<TaskPlan> list(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return repository.findAll();
+        }
+        return repository.findByUserId(userId);
+    }
+
     public List<TaskPlan> list() {
-        return repository.findAll();
+        return list(null);
     }
 
     public void dispatchDueOnceTasks() {
         OffsetDateTime now = OffsetDateTime.now();
         repository.findAll().forEach(plan -> {
             List<TaskAction> nextActions = plan.tasks().stream()
-                    .map(action -> dispatchIfDue(plan.planId(), action, now))
+                    .map(action -> dispatchIfDue(plan, action, now))
                     .toList();
             if (!nextActions.equals(plan.tasks())) {
-                repository.save(plan.withStatus(plan.status(), nextActions));
+                repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
             }
         });
+    }
+
+    private void ensureSameUser(TaskPlan plan, String userId) {
+        if (userId == null || userId.isBlank()) {
+            return;
+        }
+        if (plan.userId() == null || !plan.userId().equals(userId)) {
+            throw new IllegalArgumentException("任务计划不存在或无权访问: " + plan.planId());
+        }
+    }
+
+    private String effectiveOperator(String operatorUserId, String fallbackUserId) {
+        return operatorUserId == null || operatorUserId.isBlank()
+                ? fallbackUserId
+                : operatorUserId;
+    }
+
+    private TaskStatus resolvePlanStatus(List<TaskAction> actions) {
+        if (actions.stream().allMatch(action -> action.status() == TaskStatus.CANCELLED)) {
+            return TaskStatus.CANCELLED;
+        }
+        if (actions.stream().anyMatch(action -> action.status() == TaskStatus.SCHEDULED)) {
+            return TaskStatus.SCHEDULED;
+        }
+        if (actions.stream().anyMatch(action -> action.status() == TaskStatus.FAILED)) {
+            return TaskStatus.FAILED;
+        }
+        if (actions.stream().allMatch(action -> action.status() == TaskStatus.EXECUTED)) {
+            return TaskStatus.EXECUTED;
+        }
+        return TaskStatus.CONFIRMED;
     }
 
     private ExecutionSummary summarize(List<TaskAction> actions) {
@@ -154,7 +253,7 @@ public class AiTaskService {
         return new ExecutionSummary(executed, scheduled, failed);
     }
 
-    private TaskAction dispatchIfDue(String planId, TaskAction action, OffsetDateTime now) {
+    private TaskAction dispatchIfDue(TaskPlan plan, TaskAction action, OffsetDateTime now) {
         if (action.status() != TaskStatus.SCHEDULED || action.schedule() == null) {
             return action;
         }
@@ -168,7 +267,7 @@ public class AiTaskService {
                 return action.withSchedule(schedule);
             }
             TaskAction executable = action.withSchedule(schedule);
-            TaskAction executed = executionService.executeNow(planId, executable, SYSTEM_OPERATOR);
+            TaskAction executed = executionService.executeNow(plan.planId(), plan.userId(), executable, SYSTEM_OPERATOR);
             if (schedule.isRecurring() && executed.status() == TaskStatus.EXECUTED) {
                 TaskSchedule nextSchedule = cronScheduleService.markTriggered(schedule, now);
                 String note = "周期任务已执行，下一次触发: cron=" + nextSchedule.cron()

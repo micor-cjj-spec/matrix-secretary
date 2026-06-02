@@ -11,6 +11,19 @@ spring:
     url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/ai_secretary_demo?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
     username: ${MYSQL_USERNAME:ai_demo}
     password: ${MYSQL_PASSWORD:ai_demo_123}
+  mail:
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:micor.cjj@qq.com}
+    password: ${MAIL_PASSWORD:wzveeooccjokdjia}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: ${MAIL_SMTP_STARTTLS_ENABLE:true}
+          ssl:
+            enable: ${MAIL_SMTP_SSL_ENABLE:false}
 
 mybatis-plus:
   configuration:
@@ -24,7 +37,11 @@ auto-table:
   model-package: com.kailei.demo.entity
 
 ai-secretary:
-  python-semantic-url: http://127.0.0.1:10001/api/v1/semantic/parse
+  python-semantic-url: ${PYTHON_SEMANTIC_URL:http://127.0.0.1:10001/api/v1/semantic/parse}
+  api-key: ${AI_SECRETARY_API_KEY:}
+  email:
+    send-enabled: ${EMAIL_SEND_ENABLED:true}
+    test-recipient: ${EMAIL_TEST_RECIPIENT:micor.cjj@gmail.com}
   local-scheduler:
     enabled: ${AI_SECRETARY_LOCAL_SCHEDULER_ENABLED:true}
 

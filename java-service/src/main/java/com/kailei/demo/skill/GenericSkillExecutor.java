@@ -1,8 +1,13 @@
 package com.kailei.demo.skill;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kailei.demo.entity.EmailDraftEntity;
+import com.kailei.demo.entity.NotificationEntity;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskStatus;
+import com.kailei.demo.repository.EmailDraftRepository;
+import com.kailei.demo.repository.NotificationRepository;
+import com.kailei.demo.service.EmailSandboxService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -20,13 +25,23 @@ public class GenericSkillExecutor {
     private final RestClient restClient;
     private final SkillTemplateRenderer renderer;
     private final SkillArgumentValidator validator = new SkillArgumentValidator();
+    private final NotificationRepository notificationRepository;
+    private final EmailDraftRepository emailDraftRepository;
+    private final EmailSandboxService emailSandboxService;
 
-    public GenericSkillExecutor(RestClient restClient, ObjectMapper objectMapper) {
+    public GenericSkillExecutor(RestClient restClient,
+                                ObjectMapper objectMapper,
+                                NotificationRepository notificationRepository,
+                                EmailDraftRepository emailDraftRepository,
+                                EmailSandboxService emailSandboxService) {
         this.restClient = restClient;
         this.renderer = new SkillTemplateRenderer(objectMapper);
+        this.notificationRepository = notificationRepository;
+        this.emailDraftRepository = emailDraftRepository;
+        this.emailSandboxService = emailSandboxService;
     }
 
-    public TaskAction execute(SkillDefinition skill, TaskAction action) {
+    public TaskAction execute(String planId, String userId, SkillDefinition skill, TaskAction action) {
         try {
             validator.validate(skill, action);
         } catch (IllegalArgumentException ex) {
@@ -34,7 +49,7 @@ public class GenericSkillExecutor {
         }
         String type = skill.execution().type();
         return switch (type) {
-            case "builtin" -> executeBuiltin(skill, action);
+            case "builtin" -> executeBuiltin(planId, userId, skill, action);
             case "http" -> executeHttp(skill, action);
             case "prompt" -> action.withStatus(TaskStatus.EXECUTED, "已生成文本型任务: " + action.content());
             case "noop" -> action.withStatus(TaskStatus.EXECUTED, "已记录任务，等待人工处理: " + action.content());
@@ -42,17 +57,51 @@ public class GenericSkillExecutor {
         };
     }
 
-    private TaskAction executeBuiltin(SkillDefinition skill, TaskAction action) {
+    private TaskAction executeBuiltin(String planId, String userId, SkillDefinition skill, TaskAction action) {
         String executor = skill.execution().executor();
-        String note = switch (executor == null ? "" : executor) {
-            case "email" -> "模拟发送邮件: " + action.content();
-            case "message" -> "模拟发送消息: " + action.content();
-            case "reply" -> "模拟回复消息: " + action.content();
-            case "reminder" -> "模拟创建提醒: " + action.content();
-            case "todo" -> "模拟创建待办: " + action.content();
-            case "schedule" -> "模拟创建定时任务: " + action.content();
-            default -> "模拟执行 Skill[" + skill.name() + "]: " + action.content();
+        return switch (executor == null ? "" : executor) {
+            case "reminder" -> createNotification(planId, userId, action, "REMINDER", "已创建站内提醒");
+            case "todo" -> createNotification(planId, userId, action, "TODO", "已创建站内待办");
+            case "email" -> createEmailDraftAndMaybeSend(planId, userId, action);
+            case "message" -> mockExecuted(skill, action, "模拟发送消息: " + action.content());
+            case "reply" -> mockExecuted(skill, action, "模拟回复消息: " + action.content());
+            case "schedule" -> mockExecuted(skill, action, "模拟创建定时任务: " + action.content());
+            default -> mockExecuted(skill, action, "模拟执行 Skill[" + skill.name() + "]: " + action.content());
         };
+    }
+
+    private TaskAction createNotification(String planId, String userId, TaskAction action, String type, String prefix) {
+        if (userId == null || userId.isBlank()) {
+            return action.withStatus(TaskStatus.FAILED, "创建站内通知失败: 缺少 userId");
+        }
+        NotificationEntity notification = notificationRepository.createFromAction(userId, planId, action, type);
+        String note = prefix + ": notificationId=" + notification.getId();
+        log.info("Create notification [{}] for action [{}] user [{}]", notification.getId(), action.actionId(), userId);
+        return action.withStatus(TaskStatus.EXECUTED, note);
+    }
+
+    private TaskAction createEmailDraftAndMaybeSend(String planId, String userId, TaskAction action) {
+        if (userId == null || userId.isBlank()) {
+            return action.withStatus(TaskStatus.FAILED, "创建邮件草稿失败: 缺少 userId");
+        }
+        EmailDraftEntity draft = emailDraftRepository.createDraft(userId, planId, action);
+        EmailSandboxService.SendResult sendResult = emailSandboxService.sendDraftToSandbox(draft);
+        if (sendResult.attempted() && sendResult.sent()) {
+            emailDraftRepository.markSent(draft.getId(), userId);
+        } else if (sendResult.attempted()) {
+            emailDraftRepository.markFailed(draft.getId(), userId);
+            return action.withStatus(TaskStatus.FAILED, "邮件草稿已创建但发送失败: draftId=" + draft.getId() + ", " + sendResult.message());
+        }
+
+        String note = "已创建邮件草稿: draftId=" + draft.getId() + ", " + sendResult.message();
+        if (draft.getRecipientAddress() == null || draft.getRecipientAddress().isBlank()) {
+            note += ", 解析收件人地址为空但测试模式会发往沙箱收件人";
+        }
+        log.info("Create email draft [{}] for action [{}] user [{}] sendResult={}", draft.getId(), action.actionId(), userId, sendResult.message());
+        return action.withStatus(TaskStatus.EXECUTED, note);
+    }
+
+    private TaskAction mockExecuted(SkillDefinition skill, TaskAction action, String note) {
         log.info("Execute skill [{}] action [{}] {}", skill.name(), action.actionId(), note);
         return action.withStatus(TaskStatus.EXECUTED, note);
     }

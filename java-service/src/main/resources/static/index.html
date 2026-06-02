@@ -28,6 +28,12 @@
     .tag.danger { background: #fef2f2; color: #b91c1c; }
     .expression { font-family: Consolas, Monaco, monospace; background: #f1f5f9; border-radius: 4px; padding: 2px 6px; }
     .debug-note { color: #64748b; font-size: 12px; line-height: 1.6; margin-top: 10px; }
+    .reminder-popup { position: fixed; right: 24px; bottom: 24px; z-index: 20; width: min(360px, calc(100vw - 32px)); border: 1px solid #bfdbfe; border-radius: 8px; background: #fff; box-shadow: 0 18px 50px rgba(15, 23, 42, .22); padding: 16px; transform: translateY(18px); opacity: 0; pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
+    .reminder-popup.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    .reminder-popup h2 { margin: 0 0 8px; font-size: 17px; }
+    .reminder-popup p { margin: 0; color: #334155; }
+    .reminder-popup .popup-time { margin-top: 10px; color: #64748b; font-size: 12px; }
+    .reminder-popup .popup-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
     @media (max-width: 920px) { main { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -49,12 +55,29 @@
     <div class="debug-note">页面仅展示中文业务信息；后端原始字段已在前端做中文转换。</div>
   </section>
 </main>
+<div id="reminderPopup" class="reminder-popup" role="alert" aria-live="assertive" aria-hidden="true">
+  <h2>提醒事项</h2>
+  <p id="reminderPopupContent"></p>
+  <div id="reminderPopupTime" class="popup-time"></div>
+  <div class="popup-actions">
+    <button id="reminderPopupClose" class="secondary" type="button">知道了</button>
+  </div>
+</div>
 <script>
   const input = document.querySelector("#input");
   const tasksEl = document.querySelector("#tasks");
   const statusEl = document.querySelector("#status");
   const confirmBtn = document.querySelector("#confirmBtn");
+  const reminderPopup = document.querySelector("#reminderPopup");
+  const reminderPopupContent = document.querySelector("#reminderPopupContent");
+  const reminderPopupTime = document.querySelector("#reminderPopupTime");
+  const reminderPopupClose = document.querySelector("#reminderPopupClose");
   let currentPlanId = null;
+  let reminderPollStarted = false;
+  let reminderPollReady = false;
+  let reminderPopupTimer = null;
+  const REMINDER_NOTIFIED_KEY = "aiSecretary.notifiedReminderActionIds";
+  const notifiedReminderIds = loadNotifiedReminderIds();
 
   const ACTION_TYPE_TEXT = {
     reply_message: "回复消息",
@@ -122,6 +145,8 @@
 
   document.querySelector("#previewBtn").addEventListener("click", preview);
   confirmBtn.addEventListener("click", confirmPlan);
+  reminderPopupClose.addEventListener("click", hideReminderPopup);
+  startReminderPolling();
 
   async function preview() {
     statusEl.textContent = "解析中...";
@@ -147,6 +172,7 @@
     const data = await res.json();
     statusEl.textContent = `已执行：${data.executionSummary.executed}，已调度：${data.executionSummary.scheduled}，失败：${data.executionSummary.failed}`;
     render(data.plan);
+    reminderPollReady = true;
   }
 
   function render(plan) {
@@ -274,6 +300,77 @@
       (text, [raw, translated]) => text.replaceAll(raw, translated),
       value
     );
+  }
+
+  function startReminderPolling() {
+    if (reminderPollStarted) return;
+    reminderPollStarted = true;
+    pollExecutedReminders();
+    setInterval(pollExecutedReminders, 5000);
+  }
+
+  async function pollExecutedReminders() {
+    try {
+      const res = await fetch("/api/ai-task", { cache: "no-store" });
+      if (!res.ok) return;
+      const plans = await res.json();
+      collectExecutedReminders(Array.isArray(plans) ? plans : []);
+    } catch (err) {
+      console.warn("提醒轮询失败", err);
+    }
+  }
+
+  function collectExecutedReminders(plans) {
+    const reminders = plans
+      .flatMap(plan => (plan.tasks || []).map(task => ({ plan, task })))
+      .filter(({ task }) => isExecutedReminder(task));
+
+    if (!reminderPollReady) {
+      reminders.forEach(({ task }) => notifiedReminderIds.add(task.actionId));
+      saveNotifiedReminderIds();
+      reminderPollReady = true;
+      return;
+    }
+
+    reminders.forEach(({ plan, task }) => {
+      if (notifiedReminderIds.has(task.actionId)) return;
+      notifiedReminderIds.add(task.actionId);
+      saveNotifiedReminderIds();
+      showReminderPopup(plan, task);
+    });
+  }
+
+  function isExecutedReminder(task) {
+    return normalizeEnum(readField(task, "actionType", "action_type")) === "reminder"
+      && normalizeStatus(readField(task, "status")) === "EXECUTED";
+  }
+
+  function showReminderPopup(plan, task) {
+    const content = task.content || task.title || "你有一个提醒事项";
+    reminderPopupContent.textContent = content;
+    reminderPopupTime.textContent = `执行时间：${formatDateTime(plan.updatedAt || new Date().toISOString())}`;
+    reminderPopup.classList.add("show");
+    reminderPopup.setAttribute("aria-hidden", "false");
+    clearTimeout(reminderPopupTimer);
+    reminderPopupTimer = setTimeout(hideReminderPopup, 12000);
+  }
+
+  function hideReminderPopup() {
+    reminderPopup.classList.remove("show");
+    reminderPopup.setAttribute("aria-hidden", "true");
+    clearTimeout(reminderPopupTimer);
+  }
+
+  function loadNotifiedReminderIds() {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(REMINDER_NOTIFIED_KEY) || "[]"));
+    } catch (err) {
+      return new Set();
+    }
+  }
+
+  function saveNotifiedReminderIds() {
+    localStorage.setItem(REMINDER_NOTIFIED_KEY, JSON.stringify([...notifiedReminderIds].slice(-300)));
   }
 
   function escapeHtml(value) {

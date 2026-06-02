@@ -1,6 +1,7 @@
 package com.kailei.demo.model;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 public record TaskSchedule(
         @JsonAlias("schedule_type")
@@ -24,22 +25,27 @@ public record TaskSchedule(
         triggerCount = triggerCount == null ? 0 : triggerCount;
     }
 
+    @JsonIgnore
     public boolean shouldRunImmediately() {
         return "none".equalsIgnoreCase(scheduleType);
     }
 
+    @JsonIgnore
     public boolean isScheduled() {
         return "once".equalsIgnoreCase(scheduleType) || "recurring".equalsIgnoreCase(scheduleType);
     }
 
+    @JsonIgnore
     public boolean isOnce() {
         return "once".equalsIgnoreCase(scheduleType);
     }
 
+    @JsonIgnore
     public boolean isRecurring() {
         return "recurring".equalsIgnoreCase(scheduleType);
     }
 
+    @JsonIgnore
     public String effectiveRunAt() {
         return nextRunAt != null && !nextRunAt.isBlank() ? nextRunAt : runAt;
     }

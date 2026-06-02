@@ -16,6 +16,7 @@ class Settings:
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str = "deepseek/deepseek-v4-flash:free"
+    llm_trust_env: bool = False
     app_url: str = "http://127.0.0.1:10002"
     app_title: str = "AI Secretary Demo"
     skill_catalog_url: str = "http://127.0.0.1:10002/api/skills"
@@ -32,6 +33,7 @@ def get_settings() -> Settings:
         openrouter_api_key=api_key,
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
         openrouter_model=os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash:free"),
+        llm_trust_env=read_bool(os.getenv("LLM_TRUST_ENV"), default=False),
         app_url=os.getenv("APP_URL", "http://127.0.0.1:10002"),
         app_title=os.getenv("APP_TITLE", "AI Secretary Demo"),
         skill_catalog_url=os.getenv("SKILL_CATALOG_URL", "http://127.0.0.1:10002/api/skills"),
@@ -53,3 +55,9 @@ def normalize_api_key(value: str | None) -> str | None:
     if not stripped or stripped.startswith("replace-with-") or stripped in {"your-key", "你的新 OpenRouter Key"}:
         return None
     return stripped
+
+
+def read_bool(value: str | None, default: bool = False) -> bool:
+    if value is None or not value.strip():
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
