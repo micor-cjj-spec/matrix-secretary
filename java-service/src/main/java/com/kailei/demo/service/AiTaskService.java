@@ -81,8 +81,9 @@ public class AiTaskService {
 
     public TaskPlan editAction(String planId, String actionId, EditTaskActionRequest request) {
         TaskPlan plan = get(planId);
-        String effectiveOperator = effectiveOperator(request == null ? null : request.operatorUserId(), plan.userId());
-        ensureOperatorCanAccess(plan, effectiveOperator);
+        String requestedOperator = request == null ? null : request.operatorUserId();
+        ensureOperatorCanAccess(plan, requestedOperator);
+        String effectiveOperator = effectiveOperator(requestedOperator, plan.userId());
         if (plan.status() != TaskStatus.WAITING_CONFIRM) {
             throw new IllegalArgumentException("只有 WAITING_CONFIRM 状态的任务计划允许编辑: " + planId);
         }
@@ -156,8 +157,8 @@ public class AiTaskService {
 
     public ConfirmTaskResponse confirm(String planId, String operatorUserId) {
         TaskPlan plan = get(planId);
+        ensureOperatorCanAccess(plan, operatorUserId);
         String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
-        ensureOperatorCanAccess(plan, effectiveOperator);
         if (plan.status() != TaskStatus.WAITING_CONFIRM) {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
@@ -173,8 +174,8 @@ public class AiTaskService {
 
     public ConfirmTaskResponse cancel(String planId, String operatorUserId, String reason) {
         TaskPlan plan = get(planId);
+        ensureOperatorCanAccess(plan, operatorUserId);
         String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
-        ensureOperatorCanAccess(plan, effectiveOperator);
         if (plan.status() == TaskStatus.CANCELLED) {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
@@ -202,8 +203,8 @@ public class AiTaskService {
 
     public ConfirmTaskResponse retryAction(String planId, String actionId, String operatorUserId) {
         TaskPlan plan = get(planId);
+        ensureOperatorCanAccess(plan, operatorUserId);
         String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
-        ensureOperatorCanAccess(plan, effectiveOperator);
         List<TaskAction> nextActions = new ArrayList<>();
         boolean matched = false;
         for (TaskAction action : plan.tasks()) {
