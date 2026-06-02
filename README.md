@@ -43,6 +43,7 @@ Java 负责：
 - 编排立即执行、一次性调度、周期调度
 - 对 Skill 参数进行基础校验
 - 记录执行日志到 `ai_task_execution_log`
+- 统一收敛 API 错误响应
 - 模拟邮件、消息、待办、提醒执行
 
 ## 启动 Python 服务
@@ -372,6 +373,37 @@ Content-Type: application/json
   "operatorUserId": "demo-user"
 }
 ```
+
+## 统一错误响应
+
+Java 服务会通过 `GlobalExceptionHandler` 将常见异常收敛为统一 JSON 结构，便于前端、Dify 或其他外部调用方处理。
+
+示例：
+
+```json
+{
+  "code": "BAD_REQUEST",
+  "message": "只有 WAITING_CONFIRM 状态的任务计划允许编辑: plan-xxxx",
+  "path": "/api/ai-task/plan-xxxx/actions/act-1",
+  "traceId": "err-12ab34cd",
+  "timestamp": "2026-06-02T10:00:00+08:00",
+  "details": {}
+}
+```
+
+当前错误码：
+
+| code | HTTP 状态 | 说明 |
+|---|---:|---|
+| `BAD_REQUEST` | 400 | 业务参数错误，例如状态不允许编辑、操作人不匹配 |
+| `VALIDATION_FAILED` | 400 | 参数校验失败 |
+| `MISSING_PARAMETER` | 400 | 缺少必填请求参数 |
+| `INVALID_JSON` | 400 | 请求体 JSON 格式错误或字段类型不匹配 |
+| `METHOD_NOT_ALLOWED` | 405 | 请求方法不支持 |
+| `NOT_FOUND` | 404 | 接口不存在；实际生效依赖 Spring MVC no-handler 配置 |
+| `INTERNAL_SERVER_ERROR` | 500 | 未预期异常，响应内会包含 `traceId` |
+
+调用方建议只依赖 `code`、`message`、`traceId` 和 `details`，不要依赖 Java 异常类名或日志文本。
 
 ## 状态流转
 
