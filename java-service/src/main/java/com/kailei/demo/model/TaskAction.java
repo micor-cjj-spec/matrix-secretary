@@ -27,6 +27,33 @@ public record TaskAction(
         requiresConfirmation = Boolean.TRUE.equals(requiresConfirmation);
     }
 
+    public TaskAction withEditableFields(String nextTitle,
+                                         String nextContent,
+                                         TaskTarget nextTarget,
+                                         TaskSchedule nextSchedule,
+                                         Map<String, Object> nextArgs,
+                                         String nextPriority,
+                                         Boolean nextRequiresConfirmation) {
+        return new TaskAction(
+                actionId,
+                actionType,
+                skillName,
+                keepIfBlank(nextTitle, title),
+                nextContent == null ? content : nextContent,
+                nextTarget == null ? target : nextTarget,
+                nextSchedule == null ? schedule : nextSchedule,
+                nextArgs == null ? args : new LinkedHashMap<>(nextArgs),
+                keepIfBlank(nextPriority, priority),
+                riskLevel,
+                confidence,
+                nextRequiresConfirmation == null ? requiresConfirmation : nextRequiresConfirmation,
+                sourceSentence,
+                analysisNote,
+                status,
+                executionNote
+        );
+    }
+
     public TaskAction withStatus(TaskStatus nextStatus, String note) {
         return new TaskAction(
                 actionId,
@@ -67,5 +94,9 @@ public record TaskAction(
                 status,
                 executionNote
         );
+    }
+
+    private static String keepIfBlank(String nextValue, String currentValue) {
+        return nextValue == null || nextValue.isBlank() ? currentValue : nextValue;
     }
 }
