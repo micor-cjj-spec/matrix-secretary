@@ -4,6 +4,7 @@ import com.kailei.demo.entity.TaskExecutionLogEntity;
 import com.kailei.demo.model.CancelTaskRequest;
 import com.kailei.demo.model.ConfirmTaskRequest;
 import com.kailei.demo.model.ConfirmTaskResponse;
+import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.RetryTaskRequest;
 import com.kailei.demo.model.TaskPlan;
@@ -11,6 +12,7 @@ import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.service.AiTaskService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -36,6 +38,13 @@ public class AiTaskController {
     @PostMapping("/preview")
     public TaskPlan preview(@Valid @RequestBody PreviewTaskRequest request) {
         return aiTaskService.preview(request);
+    }
+
+    @PatchMapping("/{planId}/actions/{actionId}")
+    public TaskPlan editAction(@PathVariable String planId,
+                               @PathVariable String actionId,
+                               @RequestBody(required = false) EditTaskActionRequest request) {
+        return aiTaskService.editAction(planId, actionId, request);
     }
 
     @PostMapping("/{planId}/confirm")
