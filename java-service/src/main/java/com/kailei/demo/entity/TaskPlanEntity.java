@@ -25,6 +25,10 @@ public class TaskPlanEntity {
     @ColumnComment("链路追踪ID")
     private String traceId;
 
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 64)
+    @ColumnComment("会话ID")
+    private String sessionId;
+
     @ColumnType(MysqlTypeConstant.LONGTEXT)
     @ColumnComment("用户原始输入")
     private String sourceText;
@@ -61,6 +65,14 @@ public class TaskPlanEntity {
 
     public void setTraceId(String traceId) {
         this.traceId = traceId;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId;
     }
 
     public String getSourceText() {
