@@ -17,6 +17,9 @@ public class ChannelMessageExecutor {
 
     public TaskAction send(String planId, String userId, TaskAction action) {
         ChannelPlatform platform = resolvePlatform(userId, action);
+        if (platform == ChannelPlatform.WEB) {
+            return action.withStatus(TaskStatus.EXECUTED, "模拟发送渠道消息: " + action.content());
+        }
         ChannelAdapter adapter = adapterRegistry.find(platform)
                 .orElseThrow(() -> new IllegalArgumentException("未注册渠道消息发送器: " + platform));
         ChannelOutgoingMessage outgoing = new ChannelOutgoingMessage(
