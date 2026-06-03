@@ -24,6 +24,7 @@ public class GlobalExceptionHandler {
                 .body(ApiErrorResponse.of(
                         "PYTHON_SERVICE_UNAVAILABLE",
                         "语义解析服务不可用，请确认 Python 服务是否启动，或检查模型服务配置。",
+                        request.getRequestURI(),
                         request.getHeader("X-Trace-Id")
                 ));
     }
@@ -35,6 +36,7 @@ public class GlobalExceptionHandler {
                 .body(ApiErrorResponse.of(
                         "DATABASE_UNAVAILABLE",
                         "数据库暂不可用，请确认 MySQL 是否启动并检查连接配置。",
+                        request.getRequestURI(),
                         request.getHeader("X-Trace-Id")
                 ));
     }
@@ -46,13 +48,13 @@ public class GlobalExceptionHandler {
                 .map(error -> error.getField() + ": " + error.getDefaultMessage())
                 .orElse("请求参数校验失败");
         return ResponseEntity.badRequest()
-                .body(ApiErrorResponse.of("BAD_REQUEST", message, request.getHeader("X-Trace-Id")));
+                .body(ApiErrorResponse.of("BAD_REQUEST", message, request.getRequestURI(), request.getHeader("X-Trace-Id")));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiErrorResponse> handleIllegalArgument(IllegalArgumentException ex, HttpServletRequest request) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(ApiErrorResponse.of("RESOURCE_NOT_FOUND", ex.getMessage(), request.getHeader("X-Trace-Id")));
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiErrorResponse.of("BAD_REQUEST", ex.getMessage(), request.getRequestURI(), request.getHeader("X-Trace-Id")));
     }
 
     @ExceptionHandler(Exception.class)
@@ -62,6 +64,7 @@ public class GlobalExceptionHandler {
                 .body(ApiErrorResponse.of(
                         "INTERNAL_ERROR",
                         "服务内部异常，请查看后端日志定位原因。",
+                        request.getRequestURI(),
                         request.getHeader("X-Trace-Id")
                 ));
     }
