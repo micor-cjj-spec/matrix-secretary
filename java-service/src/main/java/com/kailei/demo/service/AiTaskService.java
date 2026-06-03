@@ -5,10 +5,12 @@ import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.ExecutionSummary;
 import com.kailei.demo.model.PreviewTaskRequest;
+import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.model.TaskSchedule;
 import com.kailei.demo.model.TaskStatus;
+import com.kailei.demo.repository.AiSessionRepository;
 import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.repository.TaskPlanRepository;
 import com.kailei.demo.skill.SkillCatalog;
@@ -33,24 +35,28 @@ public class AiTaskService {
     private final SkillCatalog skillCatalog;
     private final CronScheduleService cronScheduleService;
     private final TaskExecutionLogRepository executionLogRepository;
+    private final AiSessionRepository sessionRepository;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
                          TaskExecutionService executionService,
                          SkillCatalog skillCatalog,
                          CronScheduleService cronScheduleService,
-                         TaskExecutionLogRepository executionLogRepository) {
+                         TaskExecutionLogRepository executionLogRepository,
+                         AiSessionRepository sessionRepository) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
         this.skillCatalog = skillCatalog;
         this.cronScheduleService = cronScheduleService;
         this.executionLogRepository = executionLogRepository;
+        this.sessionRepository = sessionRepository;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
         String traceId = "trace-" + UUID.randomUUID().toString().substring(0, 8);
         String planId = "plan-" + UUID.randomUUID().toString().substring(0, 8);
+        SessionState session = sessionRepository.ensure(request.sessionId(), request.userId());
 
         PythonSemanticClient.PythonParseResponse parsed = pythonClient.parse(
                 new PythonSemanticClient.PythonParseRequest(
@@ -68,6 +74,7 @@ public class AiTaskService {
         TaskPlan plan = new TaskPlan(
                 planId,
                 parsed.traceId(),
+                session.sessionId(),
                 request.text(),
                 request.userId(),
                 TaskStatus.WAITING_CONFIRM,
@@ -76,7 +83,9 @@ public class AiTaskService {
                 OffsetDateTime.now(),
                 OffsetDateTime.now()
         );
-        return repository.save(plan);
+        TaskPlan saved = repository.save(plan);
+        sessionRepository.updateAfterPreview(saved);
+        return saved;
     }
 
     public TaskPlan editAction(String planId, String actionId, EditTaskActionRequest request) {
@@ -117,7 +126,9 @@ public class AiTaskService {
         if (!matched) {
             throw new IllegalArgumentException("任务动作不存在: " + actionId);
         }
-        return repository.save(plan.withStatus(TaskStatus.WAITING_CONFIRM, nextActions));
+        TaskPlan saved = repository.save(plan.withStatus(TaskStatus.WAITING_CONFIRM, nextActions));
+        sessionRepository.updateAfterPlanChange(saved);
+        return saved;
     }
 
     private TaskAction toTaskAction(String planId, PythonSemanticClient.PythonTaskAction item, int index) {
@@ -168,8 +179,9 @@ public class AiTaskService {
                 .toList();
 
         TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
-        repository.save(nextPlan);
-        return new ConfirmTaskResponse(nextPlan.planId(), nextPlan.status(), summarize(nextPlan.tasks()), nextPlan);
+        TaskPlan saved = repository.save(nextPlan);
+        sessionRepository.updateAfterPlanChange(saved);
+        return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
     }
 
     public ConfirmTaskResponse cancel(String planId, String operatorUserId, String reason) {
@@ -197,8 +209,9 @@ public class AiTaskService {
                 })
                 .toList();
         TaskPlan nextPlan = plan.withStatus(TaskStatus.CANCELLED, nextActions);
-        repository.save(nextPlan);
-        return new ConfirmTaskResponse(nextPlan.planId(), nextPlan.status(), summarize(nextPlan.tasks()), nextPlan);
+        TaskPlan saved = repository.save(nextPlan);
+        sessionRepository.updateAfterPlanChange(saved);
+        return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
     }
 
     public ConfirmTaskResponse retryAction(String planId, String actionId, String operatorUserId) {
@@ -222,8 +235,9 @@ public class AiTaskService {
             throw new IllegalArgumentException("任务动作不存在: " + actionId);
         }
         TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
-        repository.save(nextPlan);
-        return new ConfirmTaskResponse(nextPlan.planId(), nextPlan.status(), summarize(nextPlan.tasks()), nextPlan);
+        TaskPlan saved = repository.save(nextPlan);
+        sessionRepository.updateAfterPlanChange(saved);
+        return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
     }
 
     public TaskPlan get(String planId) {
@@ -248,6 +262,20 @@ public class AiTaskService {
         return list(null);
     }
 
+    public SessionState getSession(String sessionId, String userId) {
+        SessionState session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + sessionId));
+        if (userId != null && !userId.isBlank() && session.userId() != null && !session.userId().equals(userId)) {
+            throw new IllegalArgumentException("会话不存在或无权访问: " + sessionId);
+        }
+        return session;
+    }
+
+    public List<TaskPlan> listBySession(String sessionId, String userId) {
+        getSession(sessionId, userId);
+        return repository.findByUserIdAndSessionId(userId, sessionId);
+    }
+
     public void dispatchDueOnceTasks() {
         OffsetDateTime now = OffsetDateTime.now();
         repository.findAll().forEach(plan -> {
@@ -255,7 +283,8 @@ public class AiTaskService {
                     .map(action -> dispatchIfDue(plan, action, now))
                     .toList();
             if (!nextActions.equals(plan.tasks())) {
-                repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
+                TaskPlan saved = repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
+                sessionRepository.updateAfterPlanChange(saved);
             }
         });
     }
