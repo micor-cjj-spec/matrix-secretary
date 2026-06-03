@@ -1,6 +1,7 @@
 package com.kailei.demo.skill;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.kailei.demo.channel.core.ChannelMessageExecutor;
 import com.kailei.demo.entity.EmailDraftEntity;
 import com.kailei.demo.entity.NotificationEntity;
 import com.kailei.demo.model.TaskAction;
@@ -28,17 +29,20 @@ public class GenericSkillExecutor {
     private final NotificationRepository notificationRepository;
     private final EmailDraftRepository emailDraftRepository;
     private final EmailSandboxService emailSandboxService;
+    private final ChannelMessageExecutor channelMessageExecutor;
 
     public GenericSkillExecutor(RestClient restClient,
                                 ObjectMapper objectMapper,
                                 NotificationRepository notificationRepository,
                                 EmailDraftRepository emailDraftRepository,
-                                EmailSandboxService emailSandboxService) {
+                                EmailSandboxService emailSandboxService,
+                                ChannelMessageExecutor channelMessageExecutor) {
         this.restClient = restClient;
         this.renderer = new SkillTemplateRenderer(objectMapper);
         this.notificationRepository = notificationRepository;
         this.emailDraftRepository = emailDraftRepository;
         this.emailSandboxService = emailSandboxService;
+        this.channelMessageExecutor = channelMessageExecutor;
     }
 
     public TaskAction execute(String planId, String userId, SkillDefinition skill, TaskAction action) {
@@ -63,11 +67,19 @@ public class GenericSkillExecutor {
             case "reminder" -> createNotification(planId, userId, action, "REMINDER", "已创建站内提醒");
             case "todo" -> createNotification(planId, userId, action, "TODO", "已创建站内待办");
             case "email" -> createEmailDraftAndMaybeSend(planId, userId, action);
-            case "message" -> mockExecuted(skill, action, "模拟发送消息: " + action.content());
-            case "reply" -> mockExecuted(skill, action, "模拟回复消息: " + action.content());
+            case "message", "reply" -> executeChannelMessage(planId, userId, skill, action);
             case "schedule" -> mockExecuted(skill, action, "模拟创建定时任务: " + action.content());
             default -> mockExecuted(skill, action, "模拟执行 Skill[" + skill.name() + "]: " + action.content());
         };
+    }
+
+    private TaskAction executeChannelMessage(String planId, String userId, SkillDefinition skill, TaskAction action) {
+        try {
+            return channelMessageExecutor.send(planId, userId, action);
+        } catch (Exception ex) {
+            log.warn("Channel message skill [{}] action [{}] failed", skill.name(), action.actionId(), ex);
+            return action.withStatus(TaskStatus.FAILED, "渠道消息发送失败: " + ex.getClass().getSimpleName());
+        }
     }
 
     private TaskAction createNotification(String planId, String userId, TaskAction action, String type, String prefix) {
