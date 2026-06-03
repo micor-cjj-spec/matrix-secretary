@@ -34,7 +34,7 @@ mybatis-plus:
 
 auto-table:
   enable: true
-  model-package: com.kailei.demo.entity
+  model-package: com.kailei.demo
 
 ai-secretary:
   python-semantic-url: ${PYTHON_SEMANTIC_URL:http://127.0.0.1:10001/api/v1/semantic/parse}
@@ -44,6 +44,14 @@ ai-secretary:
     test-recipient: ${EMAIL_TEST_RECIPIENT:}
   local-scheduler:
     enabled: ${AI_SECRETARY_LOCAL_SCHEDULER_ENABLED:true}
+
+feishu:
+  enabled: ${FEISHU_ENABLED:false}
+  client-id: ${FEISHU_CLIENT_ID:}
+  client-secret: ${FEISHU_CLIENT_SECRET:}
+  verification-token: ${FEISHU_VERIFICATION_TOKEN:}
+  encrypt-key: ${FEISHU_ENCRYPT_KEY:}
+  base-url: ${FEISHU_BASE_URL:https://open.feishu.cn}
 
 xxl:
   job:
