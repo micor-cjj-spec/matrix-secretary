@@ -7,6 +7,7 @@ import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.RetryTaskRequest;
+import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.service.AiTaskService;
@@ -89,6 +90,18 @@ public class AiTaskController {
                                                    @RequestParam(required = false) String userId) {
         aiTaskService.get(planId, userId);
         return executionLogRepository.findByPlanIdAndActionId(planId, actionId);
+    }
+
+    @GetMapping("/sessions/{sessionId}")
+    public SessionState getSession(@PathVariable String sessionId,
+                                   @RequestParam(required = false) String userId) {
+        return aiTaskService.getSession(sessionId, userId);
+    }
+
+    @GetMapping("/sessions/{sessionId}/plans")
+    public List<TaskPlan> listSessionPlans(@PathVariable String sessionId,
+                                           @RequestParam(required = false) String userId) {
+        return aiTaskService.listBySession(sessionId, userId);
     }
 
     @GetMapping
