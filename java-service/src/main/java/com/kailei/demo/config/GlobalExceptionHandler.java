@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 
@@ -89,6 +91,24 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleNoHandlerFound(NoHandlerFoundException ex,
                                                                  HttpServletRequest request) {
         return error(HttpStatus.NOT_FOUND, "NOT_FOUND", "接口不存在", request, null);
+    }
+
+    @ExceptionHandler(RestClientException.class)
+    public ResponseEntity<ApiErrorResponse> handleRestClient(RestClientException ex,
+                                                             HttpServletRequest request) {
+        log.warn("Remote service call failed", ex);
+        return error(HttpStatus.BAD_GATEWAY, "REMOTE_SERVICE_UNAVAILABLE",
+                "Remote service is unavailable. Please check Python, LLM, or channel provider configuration.",
+                request, Map.of("exception", ex.getClass().getSimpleName()));
+    }
+
+    @ExceptionHandler(DataAccessException.class)
+    public ResponseEntity<ApiErrorResponse> handleDatabase(DataAccessException ex,
+                                                           HttpServletRequest request) {
+        log.warn("Database access failed", ex);
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "DATABASE_UNAVAILABLE",
+                "Database is unavailable. Please check MySQL status and connection configuration.",
+                request, Map.of("exception", ex.getClass().getSimpleName()));
     }
 
     @ExceptionHandler(Exception.class)

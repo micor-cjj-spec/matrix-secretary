@@ -41,14 +41,14 @@ public class ChannelTaskFacade {
         Optional<String> confirmPlanId = matchPlanId(CONFIRM_PATTERN, text);
         if (confirmPlanId.isPresent()) {
             ConfirmTaskResponse response = aiTaskService.confirm(confirmPlanId.get(), incoming.secretaryUserId());
-            adapter.sendText(reply(incoming, "已确认任务计划: " + response.planId() + "，当前状态: " + response.status()));
+            adapter.sendText(reply(incoming, "已确认任务计划 " + response.planId() + "，当前状态：" + response.status()));
             return;
         }
 
         Optional<String> cancelPlanId = matchPlanId(CANCEL_PATTERN, text);
         if (cancelPlanId.isPresent()) {
             ConfirmTaskResponse response = aiTaskService.cancel(cancelPlanId.get(), incoming.secretaryUserId(), "渠道用户取消");
-            adapter.sendText(reply(incoming, "已取消任务计划: " + response.planId() + "，当前状态: " + response.status()));
+            adapter.sendText(reply(incoming, "已取消任务计划 " + response.planId() + "，当前状态：" + response.status()));
             return;
         }
 

@@ -13,6 +13,7 @@ public class FeishuProperties {
     private String verificationToken;
     private String encryptKey;
     private String baseUrl = "https://open.feishu.cn";
+    private boolean mockSendEnabled;
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
@@ -26,6 +27,8 @@ public class FeishuProperties {
     public void setEncryptKey(String encryptKey) { this.encryptKey = encryptKey; }
     public String getBaseUrl() { return baseUrl; }
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+    public boolean isMockSendEnabled() { return mockSendEnabled; }
+    public void setMockSendEnabled(boolean mockSendEnabled) { this.mockSendEnabled = mockSendEnabled; }
 
     public boolean hasCredentials() {
         return clientId != null && !clientId.isBlank()

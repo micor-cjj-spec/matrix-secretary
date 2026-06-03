@@ -41,9 +41,9 @@ public class FeishuEventController {
         if (!properties.isEnabled()) {
             return Map.of("code", 0, "msg", "feishu disabled");
         }
-        String token = string(payload.get("token"));
+        String token = resolveToken(payload);
         if (properties.getVerificationToken() != null && !properties.getVerificationToken().isBlank()
-                && token != null && !properties.getVerificationToken().equals(token)) {
+                && !properties.getVerificationToken().equals(token)) {
             throw new IllegalArgumentException("飞书事件 token 校验失败");
         }
 
@@ -94,6 +94,18 @@ public class FeishuEventController {
         }
         Object tenantKey = payload.get("tenant_key");
         return tenantKey == null ? null : String.valueOf(tenantKey);
+    }
+
+    private String resolveToken(Map<String, Object> payload) {
+        Object token = payload.get("token");
+        if (token != null) {
+            return String.valueOf(token);
+        }
+        Object headerRaw = payload.get("header");
+        if (headerRaw instanceof Map<?, ?> header && header.get("token") != null) {
+            return String.valueOf(header.get("token"));
+        }
+        return null;
     }
 
     private String string(Object value) {

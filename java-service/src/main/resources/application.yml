@@ -14,8 +14,8 @@ spring:
   mail:
     host: ${MAIL_HOST:smtp.qq.com}
     port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:}
-    password: ${MAIL_PASSWORD:}
+    username: ${MAIL_USERNAME:micor.cjj@qq.com}
+    password: ${MAIL_PASSWORD:yowhnilgqeqvgbcf}
     properties:
       mail:
         smtp:
@@ -40,8 +40,8 @@ ai-secretary:
   python-semantic-url: ${PYTHON_SEMANTIC_URL:http://127.0.0.1:10001/api/v1/semantic/parse}
   api-key: ${AI_SECRETARY_API_KEY:}
   email:
-    send-enabled: ${EMAIL_SEND_ENABLED:false}
-    test-recipient: ${EMAIL_TEST_RECIPIENT:}
+    send-enabled: ${EMAIL_SEND_ENABLED:true}
+    test-recipient: ${EMAIL_TEST_RECIPIENT:micor.cjj@gmail.com}
   local-scheduler:
     enabled: ${AI_SECRETARY_LOCAL_SCHEDULER_ENABLED:true}
 
@@ -52,6 +52,7 @@ feishu:
   verification-token: ${FEISHU_VERIFICATION_TOKEN:}
   encrypt-key: ${FEISHU_ENCRYPT_KEY:}
   base-url: ${FEISHU_BASE_URL:https://open.feishu.cn}
+  mock-send-enabled: ${FEISHU_MOCK_SEND_ENABLED:false}
 
 xxl:
   job:

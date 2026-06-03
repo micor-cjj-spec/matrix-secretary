@@ -35,6 +35,9 @@ public class FeishuMessageClient {
         if (chatId == null || chatId.isBlank()) {
             throw new IllegalArgumentException("发送飞书消息失败: chatId 为空");
         }
+        if (properties.isMockSendEnabled()) {
+            return "飞书模拟发送成功: chat_id=" + chatId;
+        }
         return send("chat_id", chatId, text);
     }
 
@@ -44,6 +47,9 @@ public class FeishuMessageClient {
         }
         if (openId == null || openId.isBlank()) {
             throw new IllegalArgumentException("发送飞书消息失败: openId 为空");
+        }
+        if (properties.isMockSendEnabled()) {
+            return "飞书模拟发送成功: open_id=" + openId;
         }
         return send("open_id", openId, text);
     }
