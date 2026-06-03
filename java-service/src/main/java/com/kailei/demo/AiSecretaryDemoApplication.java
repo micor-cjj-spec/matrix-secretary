@@ -6,8 +6,8 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-@EnableAutoTable(basePackages = "com.kailei.demo.entity")
-@MapperScan("com.kailei.demo.mapper")
+@EnableAutoTable(basePackages = {"com.kailei.demo.entity", "com.kailei.demo.channel.entity"})
+@MapperScan({"com.kailei.demo.mapper", "com.kailei.demo.channel.mapper"})
 @EnableScheduling
 @SpringBootApplication
 public class AiSecretaryDemoApplication {
