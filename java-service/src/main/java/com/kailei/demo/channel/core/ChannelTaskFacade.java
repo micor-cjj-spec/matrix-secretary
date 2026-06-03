@@ -3,12 +3,15 @@ package com.kailei.demo.channel.core;
 import com.kailei.demo.channel.model.ChannelIncomingMessage;
 import com.kailei.demo.channel.model.ChannelOutgoingMessage;
 import com.kailei.demo.model.ConfirmTaskResponse;
+import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.service.AiTaskService;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -55,7 +58,26 @@ public class ChannelTaskFacade {
                 incoming.secretaryUserId(),
                 incoming.secretarySessionId()
         ));
+        plan = attachChannelContext(plan, incoming);
         adapter.sendText(reply(incoming, renderPreview(plan)));
+    }
+
+    private TaskPlan attachChannelContext(TaskPlan plan, ChannelIncomingMessage incoming) {
+        TaskPlan current = plan;
+        for (TaskAction action : plan.tasks()) {
+            Map<String, Object> args = new LinkedHashMap<>(action.args());
+            args.putIfAbsent("platform", incoming.platform().name());
+            args.putIfAbsent("tenantId", incoming.tenantId());
+            args.putIfAbsent("conversationId", incoming.conversationId());
+            args.putIfAbsent("receiverId", incoming.senderId());
+            args.putIfAbsent("replyToMessageId", incoming.messageId());
+            current = aiTaskService.editAction(
+                    current.planId(),
+                    action.actionId(),
+                    new EditTaskActionRequest(incoming.secretaryUserId(), null, null, null, null, args, null, null)
+            );
+        }
+        return current;
     }
 
     private Optional<String> matchPlanId(Pattern pattern, String text) {
