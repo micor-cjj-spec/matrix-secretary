@@ -57,6 +57,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
                 ApiErrorResponse.of(
                         "UNAUTHORIZED",
                         "API Key 无效或缺失，请通过 X-AI-Secretary-Key 或 Authorization: Bearer <key> 传入有效凭证。",
+                        request.getRequestURI(),
                         request.getHeader("X-Trace-Id")
                 )
         );

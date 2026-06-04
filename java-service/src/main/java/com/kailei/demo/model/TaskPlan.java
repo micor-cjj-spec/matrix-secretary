@@ -6,6 +6,7 @@ import java.util.List;
 public record TaskPlan(
         String planId,
         String traceId,
+        String sessionId,
         String sourceText,
         String userId,
         TaskStatus status,
@@ -18,6 +19,7 @@ public record TaskPlan(
         return new TaskPlan(
                 planId,
                 traceId,
+                sessionId,
                 sourceText,
                 userId,
                 nextStatus,

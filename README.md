@@ -4,15 +4,16 @@
 
 ```text
 浏览器 / 调用方
-  -> Java 主控服务: 业务入口、任务预览、确认、状态编排、执行模拟、执行日志
+  -> Java 主控服务: 业务入口、任务预览、确认、编辑、状态编排、执行模拟、执行日志
   -> Python 能力服务: 语义识别、任务拆解、时间归一化、cron 表达式生成
 ```
 
 ## 项目文档
 
 - [AI Secretary 架构演进与改造规则](docs/AI_SECRETARY_EVOLUTION_PLAN.md)
+- [阶段一：任务中心稳定化](docs/PHASE_1_TASK_CENTER.md)
 
-该文档约束后续改造方向：项目不应被改造成普通聊天机器人，而应演进为可确认、可调度、可审计、可扩展 Skill 的 AI 秘书任务执行系统。
+这些文档约束后续改造方向：项目不应被改造成普通聊天机器人，而应演进为可确认、可编辑、可调度、可审计、可扩展 Skill 的 AI 秘书任务执行系统。
 
 ## 目录结构
 
@@ -38,10 +39,11 @@ Java 负责：
 - 生成 `traceId` / `planId`
 - 调用 Python 语义服务
 - 保存任务计划到 MySQL
-- 提供用户确认机制，并记录 `operatorUserId`
+- 提供任务预览、编辑、确认、取消机制，并记录 `operatorUserId`
 - 编排立即执行、一次性调度、周期调度
 - 对 Skill 参数进行基础校验
 - 记录执行日志到 `ai_task_execution_log`
+- 统一收敛 API 错误响应
 - 模拟邮件、消息、待办、提醒执行
 
 ## 启动 Python 服务
@@ -185,15 +187,16 @@ http://127.0.0.1:10002/swagger-ui/index.html
 Java 接口：
 
 ```text
-GET  http://127.0.0.1:10002/api/skills
-POST http://127.0.0.1:10002/api/ai-task/preview
-POST http://127.0.0.1:10002/api/ai-task/{planId}/confirm
-POST http://127.0.0.1:10002/api/ai-task/{planId}/cancel
-POST http://127.0.0.1:10002/api/ai-task/{planId}/actions/{actionId}/retry
-GET  http://127.0.0.1:10002/api/ai-task/{planId}?userId=demo-user
-GET  http://127.0.0.1:10002/api/ai-task?userId=demo-user
-GET  http://127.0.0.1:10002/api/ai-task/{planId}/logs?userId=demo-user
-GET  http://127.0.0.1:10002/api/ai-task/{planId}/actions/{actionId}/logs?userId=demo-user
+GET   http://127.0.0.1:10002/api/skills
+POST  http://127.0.0.1:10002/api/ai-task/preview
+PATCH http://127.0.0.1:10002/api/ai-task/{planId}/actions/{actionId}
+POST  http://127.0.0.1:10002/api/ai-task/{planId}/confirm
+POST  http://127.0.0.1:10002/api/ai-task/{planId}/cancel
+POST  http://127.0.0.1:10002/api/ai-task/{planId}/actions/{actionId}/retry
+GET   http://127.0.0.1:10002/api/ai-task/{planId}?userId=demo-user
+GET   http://127.0.0.1:10002/api/ai-task?userId=demo-user
+GET   http://127.0.0.1:10002/api/ai-task/{planId}/logs?userId=demo-user
+GET   http://127.0.0.1:10002/api/ai-task/{planId}/actions/{actionId}/logs?userId=demo-user
 ```
 
 ## 启动 Docker 基础设施和 XXL-JOB
@@ -292,7 +295,46 @@ Content-Type: application/json
 }
 ```
 
-预览后再确认：
+确认前编辑单个任务动作：
+
+```http
+PATCH /api/ai-task/{planId}/actions/{actionId}
+Content-Type: application/json
+```
+
+```json
+{
+  "operatorUserId": "demo-user",
+  "title": "提醒事项: 王总",
+  "content": "确认项目方案已经更新，并提醒对方查看最新版",
+  "target": {
+    "targetType": "user",
+    "name": "王总",
+    "address": null
+  },
+  "schedule": {
+    "scheduleType": "once",
+    "originalText": "明天下午三点",
+    "runAt": "2026-06-03T15:00:00+08:00",
+    "cron": null,
+    "timezone": "Asia/Shanghai",
+    "nextRunAt": null,
+    "lastRunAt": null,
+    "triggerCount": 0
+  },
+  "priority": "high",
+  "requiresConfirmation": true
+}
+```
+
+编辑规则：
+
+- 只允许编辑 `WAITING_CONFIRM` 状态的任务计划和任务动作。
+- 未传字段会保留原值。
+- `schedule.cron` 可以不传，Java 会尽量根据 `runAt` 自动补齐。
+- 如果 `TaskPlan.userId` 不为空，`operatorUserId` 必须与其一致。
+
+预览或编辑后再确认：
 
 ```http
 POST /api/ai-task/{planId}/confirm
@@ -332,10 +374,42 @@ Content-Type: application/json
 }
 ```
 
+## 统一错误响应
+
+Java 服务会通过 `GlobalExceptionHandler` 将常见异常收敛为统一 JSON 结构，便于前端、Dify 或其他外部调用方处理。
+
+示例：
+
+```json
+{
+  "code": "BAD_REQUEST",
+  "message": "只有 WAITING_CONFIRM 状态的任务计划允许编辑: plan-xxxx",
+  "path": "/api/ai-task/plan-xxxx/actions/act-1",
+  "traceId": "err-12ab34cd",
+  "timestamp": "2026-06-02T10:00:00+08:00",
+  "details": {}
+}
+```
+
+当前错误码：
+
+| code | HTTP 状态 | 说明 |
+|---|---:|---|
+| `BAD_REQUEST` | 400 | 业务参数错误，例如状态不允许编辑、操作人不匹配 |
+| `VALIDATION_FAILED` | 400 | 参数校验失败 |
+| `MISSING_PARAMETER` | 400 | 缺少必填请求参数 |
+| `INVALID_JSON` | 400 | 请求体 JSON 格式错误或字段类型不匹配 |
+| `METHOD_NOT_ALLOWED` | 405 | 请求方法不支持 |
+| `NOT_FOUND` | 404 | 接口不存在；实际生效依赖 Spring MVC no-handler 配置 |
+| `INTERNAL_SERVER_ERROR` | 500 | 未预期异常，响应内会包含 `traceId` |
+
+调用方建议只依赖 `code`、`message`、`traceId` 和 `details`，不要依赖 Java 异常类名或日志文本。
+
 ## 状态流转
 
 ```text
 WAITING_CONFIRM
+  -> WAITING_CONFIRM  确认前编辑任务动作
   -> CONFIRMED
   -> EXECUTED   立即任务 / 到点后的一次性任务
   -> SCHEDULED  一次性/周期任务等待触发
@@ -357,7 +431,8 @@ WAITING_CONFIRM
 
 近期重点：
 
-- 增加任务编辑、取消、重试能力。
+- 继续完善阶段一任务中心稳定化，详见 [阶段一文档](docs/PHASE_1_TASK_CENTER.md)。
+- 增加任务编辑、取消、重试能力的自动化测试。
 - 增加 API Key / JWT 鉴权和 userId 数据隔离。
 - 将模拟执行器替换为真实邮件、提醒、待办、消息执行器。
 - 增强调度幂等、失败重试、超时恢复和 HTTP Skill 安全策略。

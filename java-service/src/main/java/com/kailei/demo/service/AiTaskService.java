@@ -2,12 +2,15 @@ package com.kailei.demo.service;
 
 import com.kailei.demo.client.PythonSemanticClient;
 import com.kailei.demo.model.ConfirmTaskResponse;
+import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.ExecutionSummary;
 import com.kailei.demo.model.PreviewTaskRequest;
+import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.model.TaskSchedule;
 import com.kailei.demo.model.TaskStatus;
+import com.kailei.demo.repository.AiSessionRepository;
 import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.repository.TaskPlanRepository;
 import com.kailei.demo.skill.SkillCatalog;
@@ -32,24 +35,28 @@ public class AiTaskService {
     private final SkillCatalog skillCatalog;
     private final CronScheduleService cronScheduleService;
     private final TaskExecutionLogRepository executionLogRepository;
+    private final AiSessionRepository sessionRepository;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
                          TaskExecutionService executionService,
                          SkillCatalog skillCatalog,
                          CronScheduleService cronScheduleService,
-                         TaskExecutionLogRepository executionLogRepository) {
+                         TaskExecutionLogRepository executionLogRepository,
+                         AiSessionRepository sessionRepository) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
         this.skillCatalog = skillCatalog;
         this.cronScheduleService = cronScheduleService;
         this.executionLogRepository = executionLogRepository;
+        this.sessionRepository = sessionRepository;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
         String traceId = "trace-" + UUID.randomUUID().toString().substring(0, 8);
         String planId = "plan-" + UUID.randomUUID().toString().substring(0, 8);
+        SessionState session = sessionRepository.ensure(request.sessionId(), request.userId());
 
         PythonSemanticClient.PythonParseResponse parsed = pythonClient.parse(
                 new PythonSemanticClient.PythonParseRequest(
@@ -67,6 +74,7 @@ public class AiTaskService {
         TaskPlan plan = new TaskPlan(
                 planId,
                 parsed.traceId(),
+                session.sessionId(),
                 request.text(),
                 request.userId(),
                 TaskStatus.WAITING_CONFIRM,
@@ -75,7 +83,52 @@ public class AiTaskService {
                 OffsetDateTime.now(),
                 OffsetDateTime.now()
         );
-        return repository.save(plan);
+        TaskPlan saved = repository.save(plan);
+        sessionRepository.updateAfterPreview(saved);
+        return saved;
+    }
+
+    public TaskPlan editAction(String planId, String actionId, EditTaskActionRequest request) {
+        TaskPlan plan = get(planId);
+        String requestedOperator = request == null ? null : request.operatorUserId();
+        ensureOperatorCanAccess(plan, requestedOperator);
+        String effectiveOperator = effectiveOperator(requestedOperator, plan.userId());
+        if (plan.status() != TaskStatus.WAITING_CONFIRM) {
+            throw new IllegalArgumentException("只有 WAITING_CONFIRM 状态的任务计划允许编辑: " + planId);
+        }
+
+        List<TaskAction> nextActions = new ArrayList<>();
+        boolean matched = false;
+        for (TaskAction action : plan.tasks()) {
+            if (!action.actionId().equals(actionId)) {
+                nextActions.add(action);
+                continue;
+            }
+            matched = true;
+            if (action.status() != TaskStatus.WAITING_CONFIRM) {
+                throw new IllegalArgumentException("只有 WAITING_CONFIRM 状态的任务动作允许编辑: " + actionId);
+            }
+            TaskSchedule nextSchedule = request == null || request.schedule() == null
+                    ? null
+                    : cronScheduleService.ensureCronAndNextRun(request.schedule());
+            TaskAction edited = action.withEditableFields(
+                    request == null ? null : request.title(),
+                    request == null ? null : request.content(),
+                    request == null ? null : request.target(),
+                    nextSchedule,
+                    request == null ? null : request.args(),
+                    request == null ? null : request.priority(),
+                    request == null ? null : request.requiresConfirmation()
+            ).withStatus(TaskStatus.WAITING_CONFIRM, "用户已编辑任务参数，等待确认");
+            executionLogRepository.logStateChange(plan.planId(), action, edited, effectiveOperator);
+            nextActions.add(edited);
+        }
+        if (!matched) {
+            throw new IllegalArgumentException("任务动作不存在: " + actionId);
+        }
+        TaskPlan saved = repository.save(plan.withStatus(TaskStatus.WAITING_CONFIRM, nextActions));
+        sessionRepository.updateAfterPlanChange(saved);
+        return saved;
     }
 
     private TaskAction toTaskAction(String planId, PythonSemanticClient.PythonTaskAction item, int index) {
@@ -115,22 +168,26 @@ public class AiTaskService {
 
     public ConfirmTaskResponse confirm(String planId, String operatorUserId) {
         TaskPlan plan = get(planId);
+        ensureOperatorCanAccess(plan, operatorUserId);
+        String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
         if (plan.status() != TaskStatus.WAITING_CONFIRM) {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
 
-        String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
         List<TaskAction> nextActions = plan.tasks().stream()
                 .map(action -> executionService.confirmAction(plan.planId(), plan.userId(), action, effectiveOperator))
                 .toList();
 
         TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
-        repository.save(nextPlan);
-        return new ConfirmTaskResponse(nextPlan.planId(), nextPlan.status(), summarize(nextPlan.tasks()), nextPlan);
+        TaskPlan saved = repository.save(nextPlan);
+        sessionRepository.updateAfterPlanChange(saved);
+        return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
     }
 
     public ConfirmTaskResponse cancel(String planId, String operatorUserId, String reason) {
         TaskPlan plan = get(planId);
+        ensureOperatorCanAccess(plan, operatorUserId);
+        String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
         if (plan.status() == TaskStatus.CANCELLED) {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
@@ -140,7 +197,6 @@ public class AiTaskService {
             throw new IllegalArgumentException("任务已存在已执行动作，不能整体取消: " + planId);
         }
 
-        String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
         String cancelReason = reason == null || reason.isBlank() ? "用户主动取消" : reason;
         List<TaskAction> nextActions = plan.tasks().stream()
                 .map(action -> {
@@ -153,12 +209,14 @@ public class AiTaskService {
                 })
                 .toList();
         TaskPlan nextPlan = plan.withStatus(TaskStatus.CANCELLED, nextActions);
-        repository.save(nextPlan);
-        return new ConfirmTaskResponse(nextPlan.planId(), nextPlan.status(), summarize(nextPlan.tasks()), nextPlan);
+        TaskPlan saved = repository.save(nextPlan);
+        sessionRepository.updateAfterPlanChange(saved);
+        return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
     }
 
     public ConfirmTaskResponse retryAction(String planId, String actionId, String operatorUserId) {
         TaskPlan plan = get(planId);
+        ensureOperatorCanAccess(plan, operatorUserId);
         String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
         List<TaskAction> nextActions = new ArrayList<>();
         boolean matched = false;
@@ -177,8 +235,9 @@ public class AiTaskService {
             throw new IllegalArgumentException("任务动作不存在: " + actionId);
         }
         TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
-        repository.save(nextPlan);
-        return new ConfirmTaskResponse(nextPlan.planId(), nextPlan.status(), summarize(nextPlan.tasks()), nextPlan);
+        TaskPlan saved = repository.save(nextPlan);
+        sessionRepository.updateAfterPlanChange(saved);
+        return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
     }
 
     public TaskPlan get(String planId) {
@@ -203,6 +262,20 @@ public class AiTaskService {
         return list(null);
     }
 
+    public SessionState getSession(String sessionId, String userId) {
+        SessionState session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + sessionId));
+        if (userId != null && !userId.isBlank() && session.userId() != null && !session.userId().equals(userId)) {
+            throw new IllegalArgumentException("会话不存在或无权访问: " + sessionId);
+        }
+        return session;
+    }
+
+    public List<TaskPlan> listBySession(String sessionId, String userId) {
+        getSession(sessionId, userId);
+        return repository.findByUserIdAndSessionId(userId, sessionId);
+    }
+
     public void dispatchDueOnceTasks() {
         OffsetDateTime now = OffsetDateTime.now();
         repository.findAll().forEach(plan -> {
@@ -210,7 +283,8 @@ public class AiTaskService {
                     .map(action -> dispatchIfDue(plan, action, now))
                     .toList();
             if (!nextActions.equals(plan.tasks())) {
-                repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
+                TaskPlan saved = repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
+                sessionRepository.updateAfterPlanChange(saved);
             }
         });
     }
@@ -221,6 +295,15 @@ public class AiTaskService {
         }
         if (plan.userId() == null || !plan.userId().equals(userId)) {
             throw new IllegalArgumentException("任务计划不存在或无权访问: " + plan.planId());
+        }
+    }
+
+    private void ensureOperatorCanAccess(TaskPlan plan, String operatorUserId) {
+        if (plan.userId() == null || plan.userId().isBlank()) {
+            return;
+        }
+        if (operatorUserId == null || operatorUserId.isBlank() || !plan.userId().equals(operatorUserId)) {
+            throw new IllegalArgumentException("任务计划不存在或无权操作: " + plan.planId());
         }
     }
 

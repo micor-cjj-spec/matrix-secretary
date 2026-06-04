@@ -75,6 +75,19 @@ public class TaskPlanRepository {
                 .toList();
     }
 
+    public List<TaskPlan> findByUserIdAndSessionId(String userId, String sessionId) {
+        LambdaQueryWrapper<TaskPlanEntity> wrapper = new LambdaQueryWrapper<TaskPlanEntity>()
+                .eq(TaskPlanEntity::getSessionId, sessionId)
+                .orderByDesc(TaskPlanEntity::getCreatedAt);
+        if (userId != null && !userId.isBlank()) {
+            wrapper.eq(TaskPlanEntity::getUserId, userId);
+        }
+        return taskPlanMapper.selectList(wrapper)
+                .stream()
+                .map(planEntity -> toDomain(planEntity, findActions(planEntity.getPlanId())))
+                .toList();
+    }
+
     private List<TaskActionEntity> findActions(String planId) {
         return taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
                 .eq(TaskActionEntity::getPlanId, planId)
@@ -85,6 +98,7 @@ public class TaskPlanRepository {
         TaskPlanEntity entity = new TaskPlanEntity();
         entity.setPlanId(plan.planId());
         entity.setTraceId(plan.traceId());
+        entity.setSessionId(plan.sessionId());
         entity.setSourceText(plan.sourceText());
         entity.setUserId(plan.userId());
         entity.setStatus(plan.status().name());
@@ -124,6 +138,7 @@ public class TaskPlanRepository {
         return new TaskPlan(
                 planEntity.getPlanId(),
                 planEntity.getTraceId(),
+                planEntity.getSessionId(),
                 planEntity.getSourceText(),
                 planEntity.getUserId(),
                 TaskStatus.valueOf(planEntity.getStatus()),
