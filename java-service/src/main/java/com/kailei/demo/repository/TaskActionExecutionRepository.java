@@ -8,7 +8,9 @@ import com.kailei.demo.entity.TaskActionExecutionEntity;
 import com.kailei.demo.mapper.TaskActionExecutionMapper;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskStatus;
+import com.kailei.demo.skill.SkillCatalog;
 import com.kailei.demo.skill.SkillDefinition;
+import com.kailei.demo.skill.SkillRetryPolicy;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
@@ -17,6 +19,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -26,14 +29,18 @@ public class TaskActionExecutionRepository {
 
     private static final String IDEMPOTENCY_KEY_ARG = "idempotencyKey";
     private static final String RUNNING = "RUNNING";
-    private static final long RUNNING_TIMEOUT_MINUTES = 10;
+    private static final int RECOVERY_BATCH_SIZE = 500;
 
     private final TaskActionExecutionMapper mapper;
     private final ObjectMapper objectMapper;
+    private final SkillCatalog skillCatalog;
 
-    public TaskActionExecutionRepository(TaskActionExecutionMapper mapper, ObjectMapper objectMapper) {
+    public TaskActionExecutionRepository(TaskActionExecutionMapper mapper,
+                                         ObjectMapper objectMapper,
+                                         SkillCatalog skillCatalog) {
         this.mapper = mapper;
         this.objectMapper = objectMapper;
+        this.skillCatalog = skillCatalog;
     }
 
     public ExecutionClaim tryBeginExecution(String planId,
@@ -53,8 +60,9 @@ public class TaskActionExecutionRepository {
                 return ExecutionClaim.executed(entity);
             }
             if (RUNNING.equals(entity.getStatus())) {
-                if (isRunningExpired(entity, OffsetDateTime.now())) {
-                    recoverStaleRunningExecution(entity.getId(), OffsetDateTime.now());
+                int runningTimeoutMinutes = skill.retry().runningTimeoutMinutes();
+                if (isRunningExpired(entity, OffsetDateTime.now(), runningTimeoutMinutes)) {
+                    recoverStaleRunningExecution(entity.getId(), OffsetDateTime.now(), runningTimeoutMinutes);
                     if (tryMarkRunning(entity.getId(), userId, skill, action, operatorUserId)) {
                         return ExecutionClaim.acquired(entity.getId());
                     }
@@ -92,14 +100,19 @@ public class TaskActionExecutionRepository {
     }
 
     public int recoverStaleRunningExecutions(OffsetDateTime now) {
-        OffsetDateTime expiredBefore = now.minusMinutes(RUNNING_TIMEOUT_MINUTES);
-        TaskActionExecutionEntity update = new TaskActionExecutionEntity();
-        update.setStatus(TaskStatus.FAILED.name());
-        update.setErrorMessage("RUNNING执行记录超时，已自动恢复为FAILED");
-        update.setUpdatedAt(now);
-        return mapper.update(update, new LambdaUpdateWrapper<TaskActionExecutionEntity>()
+        List<TaskActionExecutionEntity> runningExecutions = mapper.selectList(new LambdaQueryWrapper<TaskActionExecutionEntity>()
                 .eq(TaskActionExecutionEntity::getStatus, RUNNING)
-                .lt(TaskActionExecutionEntity::getUpdatedAt, expiredBefore));
+                .orderByAsc(TaskActionExecutionEntity::getUpdatedAt)
+                .last("limit " + RECOVERY_BATCH_SIZE));
+        int recovered = 0;
+        for (TaskActionExecutionEntity entity : runningExecutions) {
+            int runningTimeoutMinutes = retryPolicy(entity.getSkillName()).runningTimeoutMinutes();
+            if (isRunningExpired(entity, now, runningTimeoutMinutes)
+                    && recoverStaleRunningExecution(entity.getId(), now, runningTimeoutMinutes)) {
+                recovered++;
+            }
+        }
+        return recovered;
     }
 
     public Optional<TaskActionExecutionEntity> findExecutedByIdempotencyKey(String idempotencyKey) {
@@ -187,8 +200,8 @@ public class TaskActionExecutionRepository {
         return updated == 1;
     }
 
-    private boolean recoverStaleRunningExecution(String id, OffsetDateTime now) {
-        OffsetDateTime expiredBefore = now.minusMinutes(RUNNING_TIMEOUT_MINUTES);
+    private boolean recoverStaleRunningExecution(String id, OffsetDateTime now, int runningTimeoutMinutes) {
+        OffsetDateTime expiredBefore = now.minusMinutes(runningTimeoutMinutes);
         TaskActionExecutionEntity update = new TaskActionExecutionEntity();
         update.setStatus(TaskStatus.FAILED.name());
         update.setErrorMessage("RUNNING执行记录超时，已自动恢复为FAILED");
@@ -200,8 +213,17 @@ public class TaskActionExecutionRepository {
         return updated == 1;
     }
 
-    private boolean isRunningExpired(TaskActionExecutionEntity entity, OffsetDateTime now) {
-        return entity.getUpdatedAt() != null && entity.getUpdatedAt().isBefore(now.minusMinutes(RUNNING_TIMEOUT_MINUTES));
+    private boolean isRunningExpired(TaskActionExecutionEntity entity, OffsetDateTime now, int runningTimeoutMinutes) {
+        return entity.getUpdatedAt() != null && entity.getUpdatedAt().isBefore(now.minusMinutes(runningTimeoutMinutes));
+    }
+
+    private SkillRetryPolicy retryPolicy(String skillName) {
+        if (skillName == null || skillName.isBlank()) {
+            return SkillRetryPolicy.defaults();
+        }
+        return skillCatalog.findByName(skillName)
+                .map(SkillDefinition::retry)
+                .orElseGet(SkillRetryPolicy::defaults);
     }
 
     private ExecutionClaim claimFromExisting(TaskActionExecutionEntity entity) {
