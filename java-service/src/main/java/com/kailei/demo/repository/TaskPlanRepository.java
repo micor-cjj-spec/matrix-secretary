@@ -35,6 +35,8 @@ public class TaskPlanRepository {
     private static final int MAX_DISPATCH_QUERY_LIMIT = 500;
     private static final long DISPATCH_LOCK_TIMEOUT_MS = 5 * 60 * 1000L;
     private static final int DEFAULT_MAX_RETRY_COUNT = 3;
+    private static final int DEFAULT_RETRY_BACKOFF_SECONDS = 60;
+    private static final int MAX_RETRY_BACKOFF_SECONDS = 30 * 60;
     private static final String IDEMPOTENCY_KEY_ARG = "idempotencyKey";
 
     private final TaskPlanMapper taskPlanMapper;
@@ -148,6 +150,9 @@ public class TaskPlanRepository {
                 .and(wrapper -> wrapper.isNull(TaskActionEntity::getLockedBy)
                         .or()
                         .lt(TaskActionEntity::getLockedAtEpochMs, expiredBefore))
+                .and(wrapper -> wrapper.isNull(TaskActionEntity::getNextRetryAtEpochMs)
+                        .or()
+                        .le(TaskActionEntity::getNextRetryAtEpochMs, nowEpochMs))
                 .apply("(execution_attempt is null or max_retry_count is null or execution_attempt < max_retry_count)"));
         return updated == 1;
     }
@@ -188,6 +193,9 @@ public class TaskPlanRepository {
                 .and(wrapper -> wrapper.isNull(TaskActionEntity::getLockedBy)
                         .or()
                         .lt(TaskActionEntity::getLockedAtEpochMs, nowEpochMs - DISPATCH_LOCK_TIMEOUT_MS))
+                .and(wrapper -> wrapper.isNull(TaskActionEntity::getNextRetryAtEpochMs)
+                        .or()
+                        .le(TaskActionEntity::getNextRetryAtEpochMs, nowEpochMs))
                 .apply("(execution_attempt is null or max_retry_count is null or execution_attempt < max_retry_count)");
     }
 
@@ -216,6 +224,8 @@ public class TaskPlanRepository {
         TaskSchedule schedule = action.schedule();
         String effectiveRunAt = schedule == null ? null : schedule.effectiveRunAt();
         String idempotencyKey = resolveIdempotencyKey(planId, action, schedule, existing);
+        int nextExecutionAttempt = resolveNextExecutionAttempt(action, existing);
+        int retryBackoffSeconds = resolveRetryBackoffSeconds(action, existing, nextExecutionAttempt);
         entity.setActionId(action.actionId());
         entity.setPlanId(planId);
         entity.setActionType(action.actionType());
@@ -230,8 +240,11 @@ public class TaskPlanRepository {
         entity.setNextRunAtEpochMs(toEpochMs(effectiveRunAt));
         entity.setLastRunAt(schedule == null ? null : limit(schedule.lastRunAt(), 64));
         entity.setTriggerCount(schedule == null ? 0 : schedule.triggerCount());
-        entity.setExecutionAttempt(resolveNextExecutionAttempt(action, existing));
+        entity.setExecutionAttempt(nextExecutionAttempt);
         entity.setMaxRetryCount(resolveMaxRetryCount(existing));
+        entity.setNextRetryAtEpochMs(resolveNextRetryAtEpochMs(action, existing, retryBackoffSeconds));
+        entity.setRetryBackoffSeconds(retryBackoffSeconds);
+        entity.setLastErrorMessage(resolveLastErrorMessage(action));
         entity.setIdempotencyKey(idempotencyKey);
         entity.setArgsJson(writeJson(withIdempotencyKey(action.args(), idempotencyKey)));
         entity.setPriority(limit(action.priority(), 32));
@@ -263,6 +276,45 @@ public class TaskPlanRepository {
             return DEFAULT_MAX_RETRY_COUNT;
         }
         return existing.getMaxRetryCount();
+    }
+
+    private int resolveRetryBackoffSeconds(TaskAction action, TaskActionEntity existing, int nextExecutionAttempt) {
+        if (action.status() == TaskStatus.EXECUTED) {
+            return DEFAULT_RETRY_BACKOFF_SECONDS;
+        }
+        if (action.status() != TaskStatus.FAILED) {
+            return existing == null || existing.getRetryBackoffSeconds() == null
+                    ? DEFAULT_RETRY_BACKOFF_SECONDS
+                    : existing.getRetryBackoffSeconds();
+        }
+        int previousBackoff = existing == null || existing.getRetryBackoffSeconds() == null || existing.getRetryBackoffSeconds() <= 0
+                ? DEFAULT_RETRY_BACKOFF_SECONDS
+                : existing.getRetryBackoffSeconds();
+        if (nextExecutionAttempt <= 1) {
+            return previousBackoff;
+        }
+        return Math.min(previousBackoff * 2, MAX_RETRY_BACKOFF_SECONDS);
+    }
+
+    private Long resolveNextRetryAtEpochMs(TaskAction action, TaskActionEntity existing, int retryBackoffSeconds) {
+        if (action.status() == TaskStatus.EXECUTED) {
+            return null;
+        }
+        String existingStatus = existing == null ? null : existing.getStatus();
+        if (action.status() == TaskStatus.FAILED && !TaskStatus.FAILED.name().equals(existingStatus)) {
+            return OffsetDateTime.now().plusSeconds(retryBackoffSeconds).toInstant().toEpochMilli();
+        }
+        return existing == null ? null : existing.getNextRetryAtEpochMs();
+    }
+
+    private String resolveLastErrorMessage(TaskAction action) {
+        if (action.status() == TaskStatus.EXECUTED) {
+            return null;
+        }
+        if (action.status() == TaskStatus.FAILED) {
+            return limit(action.executionNote(), 1024);
+        }
+        return null;
     }
 
     private String resolveIdempotencyKey(String planId, TaskAction action, TaskSchedule schedule, TaskActionEntity existing) {
