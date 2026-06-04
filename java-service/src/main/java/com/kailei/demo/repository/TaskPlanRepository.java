@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,7 @@ public class TaskPlanRepository {
     private static final int MAX_DISPATCH_QUERY_LIMIT = 500;
     private static final long DISPATCH_LOCK_TIMEOUT_MS = 5 * 60 * 1000L;
     private static final int DEFAULT_MAX_RETRY_COUNT = 3;
+    private static final String IDEMPOTENCY_KEY_ARG = "idempotencyKey";
 
     private final TaskPlanMapper taskPlanMapper;
     private final TaskActionMapper taskActionMapper;
@@ -200,6 +202,7 @@ public class TaskPlanRepository {
         TaskActionEntity entity = new TaskActionEntity();
         TaskSchedule schedule = action.schedule();
         String effectiveRunAt = schedule == null ? null : schedule.effectiveRunAt();
+        String idempotencyKey = resolveIdempotencyKey(planId, action, schedule, existing);
         entity.setActionId(action.actionId());
         entity.setPlanId(planId);
         entity.setActionType(action.actionType());
@@ -218,7 +221,8 @@ public class TaskPlanRepository {
         entity.setLockedAtEpochMs(null);
         entity.setExecutionAttempt(resolveNextExecutionAttempt(action, existing));
         entity.setMaxRetryCount(resolveMaxRetryCount(existing));
-        entity.setArgsJson(writeJson(action.args()));
+        entity.setIdempotencyKey(idempotencyKey);
+        entity.setArgsJson(writeJson(withIdempotencyKey(action.args(), idempotencyKey)));
         entity.setPriority(limit(action.priority(), 32));
         entity.setRiskLevel(limit(action.riskLevel(), 32));
         entity.setConfidence(action.confidence());
@@ -250,6 +254,26 @@ public class TaskPlanRepository {
         return existing.getMaxRetryCount();
     }
 
+    private String resolveIdempotencyKey(String planId, TaskAction action, TaskSchedule schedule, TaskActionEntity existing) {
+        if (existing != null && existing.getIdempotencyKey() != null && !existing.getIdempotencyKey().isBlank()) {
+            return existing.getIdempotencyKey();
+        }
+        Object argValue = action.args().get(IDEMPOTENCY_KEY_ARG);
+        if (argValue instanceof String key && !key.isBlank()) {
+            return limit(key, 128);
+        }
+        int triggerCount = schedule == null || schedule.triggerCount() == null ? 0 : schedule.triggerCount();
+        return limit(planId + ":" + action.actionId() + ":" + triggerCount, 128);
+    }
+
+    private Map<String, Object> withIdempotencyKey(Map<String, Object> args, String idempotencyKey) {
+        Map<String, Object> next = args == null ? new LinkedHashMap<>() : new LinkedHashMap<>(args);
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            next.putIfAbsent(IDEMPOTENCY_KEY_ARG, idempotencyKey);
+        }
+        return next;
+    }
+
     private TaskPlan toDomain(TaskPlanEntity planEntity, List<TaskActionEntity> actionEntities) {
         List<TaskAction> actions = actionEntities.stream()
                 .map(this::toDomainAction)
@@ -277,7 +301,7 @@ public class TaskPlanRepository {
                 entity.getContent(),
                 readJson(entity.getTargetJson(), TaskTarget.class, new TaskTarget("unknown", null, null)),
                 readSchedule(entity),
-                readMap(entity.getArgsJson()),
+                readMapWithIdempotencyKey(entity.getArgsJson(), entity.getIdempotencyKey()),
                 entity.getPriority(),
                 entity.getRiskLevel(),
                 entity.getConfidence(),
@@ -335,6 +359,14 @@ public class TaskPlanRepository {
         } catch (JsonProcessingException ex) {
             return List.of();
         }
+    }
+
+    private Map<String, Object> readMapWithIdempotencyKey(String json, String idempotencyKey) {
+        Map<String, Object> args = new LinkedHashMap<>(readMap(json));
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            args.putIfAbsent(IDEMPOTENCY_KEY_ARG, idempotencyKey);
+        }
+        return args;
     }
 
     private Map<String, Object> readMap(String json) {
