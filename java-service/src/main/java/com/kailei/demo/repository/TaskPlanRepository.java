@@ -55,14 +55,28 @@ public class TaskPlanRepository {
         if (taskPlanMapper.updateById(planEntity) == 0) {
             taskPlanMapper.insert(planEntity);
         }
+
         Map<String, TaskActionEntity> existingActions = findActions(plan.planId()).stream()
                 .collect(Collectors.toMap(TaskActionEntity::getActionId, Function.identity(), (left, right) -> left));
-        taskActionMapper.delete(new LambdaQueryWrapper<TaskActionEntity>()
-                .eq(TaskActionEntity::getPlanId, plan.planId()));
+        Set<String> nextActionIds = new LinkedHashSet<>();
+
         for (int i = 0; i < plan.tasks().size(); i++) {
             TaskAction action = plan.tasks().get(i);
-            taskActionMapper.insert(toActionEntity(plan.planId(), action, i, existingActions.get(action.actionId())));
+            nextActionIds.add(action.actionId());
+            TaskActionEntity existing = existingActions.get(action.actionId());
+            TaskActionEntity entity = toActionEntity(plan.planId(), action, i, existing);
+            if (existing == null) {
+                taskActionMapper.insert(entity);
+            } else {
+                taskActionMapper.updateById(entity);
+            }
         }
+
+        existingActions.keySet().stream()
+                .filter(actionId -> !nextActionIds.contains(actionId))
+                .forEach(actionId -> taskActionMapper.delete(new LambdaQueryWrapper<TaskActionEntity>()
+                        .eq(TaskActionEntity::getPlanId, plan.planId())
+                        .eq(TaskActionEntity::getActionId, actionId)));
         return plan;
     }
 
@@ -139,10 +153,9 @@ public class TaskPlanRepository {
     }
 
     public void releaseActionLock(String actionId, String lockedBy) {
-        TaskActionEntity entity = new TaskActionEntity();
-        entity.setLockedBy(null);
-        entity.setLockedAtEpochMs(null);
-        taskActionMapper.update(entity, new LambdaUpdateWrapper<TaskActionEntity>()
+        taskActionMapper.update(null, new LambdaUpdateWrapper<TaskActionEntity>()
+                .set(TaskActionEntity::getLockedBy, null)
+                .set(TaskActionEntity::getLockedAtEpochMs, null)
                 .eq(TaskActionEntity::getActionId, actionId)
                 .eq(TaskActionEntity::getLockedBy, lockedBy));
     }
@@ -217,8 +230,6 @@ public class TaskPlanRepository {
         entity.setNextRunAtEpochMs(toEpochMs(effectiveRunAt));
         entity.setLastRunAt(schedule == null ? null : limit(schedule.lastRunAt(), 64));
         entity.setTriggerCount(schedule == null ? 0 : schedule.triggerCount());
-        entity.setLockedBy(null);
-        entity.setLockedAtEpochMs(null);
         entity.setExecutionAttempt(resolveNextExecutionAttempt(action, existing));
         entity.setMaxRetryCount(resolveMaxRetryCount(existing));
         entity.setIdempotencyKey(idempotencyKey);
