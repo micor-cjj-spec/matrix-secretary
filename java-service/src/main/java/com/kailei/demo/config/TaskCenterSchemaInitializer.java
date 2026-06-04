@@ -12,8 +12,6 @@ import org.springframework.stereotype.Component;
 public class TaskCenterSchemaInitializer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(TaskCenterSchemaInitializer.class);
-    private static final String TABLE_NAME = "ai_task_action_execution";
-    private static final String INDEX_NAME = "uk_task_action_execution_idempotency_key";
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -23,10 +21,38 @@ public class TaskCenterSchemaInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        ensureExecutionIdempotencyUniqueIndex();
+        ensureIndexes();
     }
 
-    private void ensureExecutionIdempotencyUniqueIndex() {
+    private void ensureIndexes() {
+        ensureIndex(
+                "ai_task_action_execution",
+                "uk_task_action_execution_idempotency_key",
+                "alter table ai_task_action_execution "
+                        + "add unique key uk_task_action_execution_idempotency_key (idempotency_key)"
+        );
+        ensureIndex(
+                "ai_task_action",
+                "idx_task_action_status_next_run_epoch",
+                "alter table ai_task_action "
+                        + "add index idx_task_action_status_next_run_epoch (status, next_run_at_epoch_ms)"
+        );
+        ensureIndex(
+                "ai_task_action",
+                "idx_task_action_status_lock_next_run",
+                "alter table ai_task_action "
+                        + "add index idx_task_action_status_lock_next_run "
+                        + "(status, locked_by, locked_at_epoch_ms, next_run_at_epoch_ms)"
+        );
+        ensureIndex(
+                "ai_task_action",
+                "idx_task_action_plan_status",
+                "alter table ai_task_action "
+                        + "add index idx_task_action_plan_status (plan_id, status)"
+        );
+    }
+
+    private void ensureIndex(String tableName, String indexName, String ddl) {
         try {
             Integer exists = jdbcTemplate.queryForObject("""
                     select count(1)
@@ -34,15 +60,14 @@ public class TaskCenterSchemaInitializer implements ApplicationRunner {
                     where table_schema = database()
                       and table_name = ?
                       and index_name = ?
-                    """, Integer.class, TABLE_NAME, INDEX_NAME);
+                    """, Integer.class, tableName, indexName);
             if (exists != null && exists > 0) {
                 return;
             }
-            jdbcTemplate.execute("alter table " + TABLE_NAME
-                    + " add unique key " + INDEX_NAME + " (idempotency_key)");
-            log.info("Created unique index {} on {}(idempotency_key)", INDEX_NAME, TABLE_NAME);
+            jdbcTemplate.execute(ddl);
+            log.info("Created index {} on {}", indexName, tableName);
         } catch (DataAccessException ex) {
-            log.warn("Skip creating unique index {} on {}: {}", INDEX_NAME, TABLE_NAME, ex.getMessage());
+            log.warn("Skip creating index {} on {}: {}", indexName, tableName, ex.getMessage());
         }
     }
 }
