@@ -274,6 +274,9 @@ public class TaskCommandService {
         int executed = (int) actions.stream().filter(action -> action.status() == TaskStatus.EXECUTED).count();
         int scheduled = (int) actions.stream().filter(action -> action.status() == TaskStatus.SCHEDULED).count();
         int failed = (int) actions.stream().filter(action -> action.status() == TaskStatus.FAILED).count();
-        return new ExecutionSummary(executed, scheduled, failed);
+        int failedFinal = (int) actions.stream().filter(action -> action.status() == TaskStatus.FAILED_FINAL).count();
+        int manualReview = (int) actions.stream().filter(action -> action.status() == TaskStatus.NEEDS_MANUAL_REVIEW).count();
+        int cancelled = (int) actions.stream().filter(action -> action.status() == TaskStatus.CANCELLED).count();
+        return new ExecutionSummary(executed, scheduled, failed, failedFinal, manualReview, cancelled);
     }
 }
