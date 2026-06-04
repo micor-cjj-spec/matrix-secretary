@@ -6,6 +6,7 @@ import com.kailei.demo.model.ConfirmTaskRequest;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.PreviewTaskRequest;
+import com.kailei.demo.model.ReopenFinalFailureRequest;
 import com.kailei.demo.model.ResolveManualReviewRequest;
 import com.kailei.demo.model.RetryTaskRequest;
 import com.kailei.demo.model.SessionState;
@@ -96,6 +97,13 @@ public class TaskCenterController {
                                                    @PathVariable String actionId,
                                                    @RequestBody(required = false) ResolveManualReviewRequest request) {
         return taskCommandService.resolveManualReview(planId, actionId, request);
+    }
+
+    @PostMapping("/plans/{planId}/actions/{actionId}/reopen-final-failure")
+    public ConfirmTaskResponse reopenFinalFailure(@PathVariable String planId,
+                                                  @PathVariable String actionId,
+                                                  @RequestBody(required = false) ReopenFinalFailureRequest request) {
+        return taskCommandService.reopenFinalFailure(planId, actionId, request);
     }
 
     @GetMapping("/plans/{planId}/logs")
