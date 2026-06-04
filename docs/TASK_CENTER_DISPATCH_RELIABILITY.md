@@ -237,6 +237,25 @@ private static final long RUNNING_TIMEOUT_MINUTES = 10;
 
 这避免了每次保存 plan 都无意义地重建 action 行，也减少了对锁、重试计数、幂等键等治理字段的干扰。
 
+### 2.8 幂等唯一约束初始化
+
+`TaskCenterSchemaInitializer` 会在应用启动后检查并创建执行记录表幂等唯一索引：
+
+```text
+uk_task_action_execution_idempotency_key
+  on ai_task_action_execution(idempotency_key)
+```
+
+初始化逻辑：
+
+```text
+1. 查询 information_schema.statistics 判断唯一索引是否存在。
+2. 不存在则执行 alter table 创建 unique key。
+3. 如果建索引失败，只打印 warn 日志，不阻断本地开发启动。
+```
+
+该唯一约束和确定性执行记录 ID 配合，用于进一步降低极端并发下重复执行记录的风险。
+
 ## 3. 已完成优化
 
 ### 3.1 不再全量扫描 TaskPlan
@@ -294,6 +313,8 @@ private Long nextRunAtEpochMs;
 
 `TaskActionExecutionEntity.idempotencyKey` 已增加索引，用于执行前查重；执行记录 ID 由 `idempotencyKey` 的 SHA-256 派生，提供第一层并发占位保护。
 
+`TaskCenterSchemaInitializer` 会尝试为 `ai_task_action_execution(idempotency_key)` 创建唯一索引 `uk_task_action_execution_idempotency_key`。
+
 `nextRunAt` 字符串字段仍保留索引，用于短期兼容旧数据兜底查询。
 
 ### 3.4 同步调度与治理字段
@@ -322,8 +343,8 @@ idempotencyKey    = 旧值 / args.idempotencyKey / planId:actionId:triggerCount
 1. 还没有 status + nextRunAtEpochMs + lockedBy 的组合索引。
 2. 历史数据如果没有 nextRunAtEpochMs，仍依赖 nextRunAt 字符串兜底。
 3. executionAttempt 当前只在状态变为 FAILED 时累加；如果未来做“FAILED 自动重新调度”，需要进一步扩展退避策略。
-4. 执行记录 ID 已经按 idempotencyKey 确定性生成，但 idempotencyKey 字段本身还没有数据库唯一约束。
-5. RUNNING 恢复目前按 updatedAt 超时标记 FAILED，后续可细化为分 skill 的超时时间。
+4. RUNNING 恢复目前按 updatedAt 超时标记 FAILED，后续可细化为分 skill 的超时时间。
+5. 唯一索引初始化如果遇到历史重复 idempotencyKey 会失败并 warn，需要人工清理重复数据后重启。
 ```
 
 ## 5. 后续推荐演进
@@ -342,7 +363,7 @@ where next_run_at_epoch_ms is null
 
 也可以用 Java migration runner 读取 `nextRunAt` 后调用 `OffsetDateTime.parse(...).toInstant().toEpochMilli()` 回填。
 
-### 5.2 增加组合索引与唯一约束
+### 5.2 增加组合索引
 
 当历史数据回填完成后，推荐组合索引：
 
@@ -351,14 +372,6 @@ idx_status_next_run_epoch(status, next_run_at_epoch_ms)
 idx_status_lock_next_run(status, locked_by, locked_at_epoch_ms, next_run_at_epoch_ms)
 idx_plan_id_status(plan_id, status)
 ```
-
-执行记录表推荐唯一约束：
-
-```text
-uk_idempotency_key(idempotency_key)
-```
-
-当前阶段通过确定性执行记录 ID 先提供并发占位保护，后续仍建议增加唯一约束。
 
 ### 5.3 增加失败退避
 
@@ -402,18 +415,19 @@ lastErrorMessage
 11. 并发触发同一个 idempotencyKey，确认只有一个请求能插入 RUNNING 执行记录并进入真实执行。
 12. 手动把 ai_task_action_execution.updated_at 改到 10 分钟以前且 status=RUNNING，确认下次调度会恢复为 FAILED。
 13. 编辑或保存计划后，确认旧 action 的 idempotencyKey、executionAttempt、maxRetryCount 不会被重建丢失。
+14. 启动应用后检查 `show index from ai_task_action_execution`，确认存在 `uk_task_action_execution_idempotency_key`。
 ```
 
 ## 7. 当前结论
 
-本阶段完成的是调度可靠性的第十步：
+本阶段完成的是调度可靠性的第十一步：
 
 ```text
-从 plan 保存时重建 action，升级为 action 级别 upsert 保存。
+从确定性执行记录 ID，升级为启动时自动创建 idempotencyKey 唯一索引。
 ```
 
 真正的生产级调度还需要继续完成：
 
 ```text
-历史数据回填、组合索引、唯一约束、失败退避、分 skill 超时策略。
+历史数据回填、组合索引、失败退避、分 skill 超时策略。
 ```
