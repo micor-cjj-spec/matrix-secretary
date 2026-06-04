@@ -4,7 +4,7 @@
 
 ## 1. 背景
 
-任务中心已经支持失败退避和 FAILED 自动重试。为了避免所有技能使用同一套重试参数，现在 `skill.yml` 可以配置 `retry` 节点。
+任务中心已经支持失败退避、FAILED 自动重试和 RUNNING 执行记录超时恢复。为了避免所有技能使用同一套重试参数，现在 `skill.yml` 可以配置 `retry` 节点。
 
 模型位置：
 
@@ -42,7 +42,7 @@ retry:
 maxRetryCount          最大失败重试次数
 initialBackoffSeconds  第一次失败后的退避秒数
 maxBackoffSeconds      最大退避秒数
-runningTimeoutMinutes  RUNNING 执行记录超时时间，预留给后续分 skill 超时恢复使用
+runningTimeoutMinutes  RUNNING 执行记录超时时间
 ```
 
 ## 3. 默认值
@@ -72,13 +72,28 @@ runningTimeoutMinutes = 10
    - maxRetryCount
    - initialBackoffSeconds
    - maxBackoffSeconds
+5. TaskActionExecutionRepository 使用 runningTimeoutMinutes 判断 RUNNING 执行记录是否超时。
 ```
 
-当前暂未完全落地：
+### 4.1 单条幂等占位恢复
+
+`tryBeginExecution(...)` 遇到同一个 `idempotencyKey` 已存在 RUNNING 记录时，会使用当前 skill 的：
 
 ```text
-runningTimeoutMinutes 目前已经进入模型，但 TaskActionExecutionRepository 的 RUNNING 超时恢复仍使用全局 10 分钟。
+runningTimeoutMinutes
 ```
+
+判断是否超时。未超时则返回 RUNNING，超时则先恢复为 FAILED，再尝试重新标记 RUNNING。
+
+### 4.2 批量 RUNNING 恢复
+
+`recoverStaleRunningExecutions(now)` 会批量扫描 RUNNING 执行记录，并根据执行记录中的：
+
+```text
+skillName
+```
+
+查找对应 skill 的 `runningTimeoutMinutes`。如果找不到 skill，则使用默认策略。
 
 ## 5. 推荐配置
 
@@ -135,8 +150,8 @@ retry:
 后续可以继续完善：
 
 ```text
-1. TaskActionExecutionRepository 按 skill.runningTimeoutMinutes 恢复 RUNNING 记录。
-2. 增加 retryableErrorCodes，只对可重试错误自动重试。
-3. 增加 nonRetryableErrorCodes，直接进入 FAILED_FINAL。
-4. 在执行记录中保存实际使用的 retry policy 快照。
+1. 增加 retryableErrorCodes，只对可重试错误自动重试。
+2. 增加 nonRetryableErrorCodes，直接进入 FAILED_FINAL。
+3. 在执行记录中保存实际使用的 retry policy 快照。
+4. 对连续 RUNNING 超时的 action 进入 NEEDS_MANUAL_REVIEW。
 ```
