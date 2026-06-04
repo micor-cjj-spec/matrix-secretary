@@ -26,6 +26,7 @@ public class TaskActionExecutionRepository {
 
     private static final String IDEMPOTENCY_KEY_ARG = "idempotencyKey";
     private static final String RUNNING = "RUNNING";
+    private static final long RUNNING_TIMEOUT_MINUTES = 10;
 
     private final TaskActionExecutionMapper mapper;
     private final ObjectMapper objectMapper;
@@ -52,6 +53,15 @@ public class TaskActionExecutionRepository {
                 return ExecutionClaim.executed(entity);
             }
             if (RUNNING.equals(entity.getStatus())) {
+                if (isRunningExpired(entity, OffsetDateTime.now())) {
+                    recoverStaleRunningExecution(entity.getId(), OffsetDateTime.now());
+                    if (tryMarkRunning(entity.getId(), userId, skill, action, operatorUserId)) {
+                        return ExecutionClaim.acquired(entity.getId());
+                    }
+                    return findByIdempotencyKey(idempotencyKey)
+                            .map(this::claimFromExisting)
+                            .orElseGet(() -> ExecutionClaim.running(null));
+                }
                 return ExecutionClaim.running(entity);
             }
             if (tryMarkRunning(entity.getId(), userId, skill, action, operatorUserId)) {
@@ -79,6 +89,17 @@ public class TaskActionExecutionRepository {
                     .map(this::claimFromExisting)
                     .orElseGet(() -> ExecutionClaim.running(null));
         }
+    }
+
+    public int recoverStaleRunningExecutions(OffsetDateTime now) {
+        OffsetDateTime expiredBefore = now.minusMinutes(RUNNING_TIMEOUT_MINUTES);
+        TaskActionExecutionEntity update = new TaskActionExecutionEntity();
+        update.setStatus(TaskStatus.FAILED.name());
+        update.setErrorMessage("RUNNING执行记录超时，已自动恢复为FAILED");
+        update.setUpdatedAt(now);
+        return mapper.update(update, new LambdaUpdateWrapper<TaskActionExecutionEntity>()
+                .eq(TaskActionExecutionEntity::getStatus, RUNNING)
+                .lt(TaskActionExecutionEntity::getUpdatedAt, expiredBefore));
     }
 
     public Optional<TaskActionExecutionEntity> findExecutedByIdempotencyKey(String idempotencyKey) {
@@ -166,11 +187,30 @@ public class TaskActionExecutionRepository {
         return updated == 1;
     }
 
+    private boolean recoverStaleRunningExecution(String id, OffsetDateTime now) {
+        OffsetDateTime expiredBefore = now.minusMinutes(RUNNING_TIMEOUT_MINUTES);
+        TaskActionExecutionEntity update = new TaskActionExecutionEntity();
+        update.setStatus(TaskStatus.FAILED.name());
+        update.setErrorMessage("RUNNING执行记录超时，已自动恢复为FAILED");
+        update.setUpdatedAt(now);
+        int updated = mapper.update(update, new LambdaUpdateWrapper<TaskActionExecutionEntity>()
+                .eq(TaskActionExecutionEntity::getId, id)
+                .eq(TaskActionExecutionEntity::getStatus, RUNNING)
+                .lt(TaskActionExecutionEntity::getUpdatedAt, expiredBefore));
+        return updated == 1;
+    }
+
+    private boolean isRunningExpired(TaskActionExecutionEntity entity, OffsetDateTime now) {
+        return entity.getUpdatedAt() != null && entity.getUpdatedAt().isBefore(now.minusMinutes(RUNNING_TIMEOUT_MINUTES));
+    }
+
     private ExecutionClaim claimFromExisting(TaskActionExecutionEntity entity) {
         if (TaskStatus.EXECUTED.name().equals(entity.getStatus())) {
             return ExecutionClaim.executed(entity);
         }
-        return ExecutionClaim.running(entity);
+        return RUNNING.equals(entity.getStatus())
+                ? ExecutionClaim.running(entity)
+                : ExecutionClaim.acquired(entity.getId());
     }
 
     private TaskActionExecutionEntity buildBaseEntity(String id,
