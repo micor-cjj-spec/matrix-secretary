@@ -133,7 +133,7 @@ private static final long DISPATCH_LOCK_TIMEOUT_MS = 5 * 60 * 1000L;
 public void releaseActionLock(String actionId, String lockedBy)
 ```
 
-释放时会校验 `lockedBy`，避免实例 A 释放实例 B 的锁。
+释放时会校验 `lockedBy`，避免实例 A 释放实例 B 的锁。实现上使用 `LambdaUpdateWrapper.set(..., null)` 显式清空锁字段，避免 null 更新被忽略。
 
 ### 2.4 重试计数
 
@@ -224,6 +224,19 @@ private static final long RUNNING_TIMEOUT_MINUTES = 10;
 
 这一步已经把幂等从“执行前查询”推进到“执行前原子占位 + 执行后更新 + RUNNING 超时恢复”。
 
+### 2.7 TaskPlan 保存策略
+
+`TaskPlanRepository.save(plan)` 当前已经从“删除并重插所有 action”升级为 action 级别 upsert：
+
+```text
+1. 先读取当前 plan 下已有 action。
+2. 对请求里的 action：存在则 updateById，不存在则 insert。
+3. 对旧数据里存在、请求里不存在的 action：按 actionId 删除。
+4. 保存时保留旧 action 的 executionAttempt / maxRetryCount / idempotencyKey。
+```
+
+这避免了每次保存 plan 都无意义地重建 action 行，也减少了对锁、重试计数、幂等键等治理字段的干扰。
+
 ## 3. 已完成优化
 
 ### 3.1 不再全量扫描 TaskPlan
@@ -294,8 +307,6 @@ nextRunAt         = schedule.effectiveRunAt()
 nextRunAtEpochMs  = OffsetDateTime.parse(schedule.effectiveRunAt()).toInstant().toEpochMilli()
 lastRunAt         = schedule.lastRunAt
 triggerCount      = schedule.triggerCount
-lockedBy          = null
-lockedAtEpochMs   = null
 executionAttempt  = 根据旧状态和新状态计算
 maxRetryCount     = 旧值或默认 3
 idempotencyKey    = 旧值 / args.idempotencyKey / planId:actionId:triggerCount
@@ -310,10 +321,9 @@ idempotencyKey    = 旧值 / args.idempotencyKey / planId:actionId:triggerCount
 ```text
 1. 还没有 status + nextRunAtEpochMs + lockedBy 的组合索引。
 2. 历史数据如果没有 nextRunAtEpochMs，仍依赖 nextRunAt 字符串兜底。
-3. 当前 save(plan) 会重建 action 行；虽然已保留 executionAttempt / maxRetryCount / idempotencyKey，但后续仍应改成 action 级别更新。
-4. executionAttempt 当前只在状态变为 FAILED 时累加；如果未来做“FAILED 自动重新调度”，需要进一步扩展退避策略。
-5. 执行记录 ID 已经按 idempotencyKey 确定性生成，但 idempotencyKey 字段本身还没有数据库唯一约束。
-6. RUNNING 恢复目前按 updatedAt 超时标记 FAILED，后续可细化为分 skill 的超时时间。
+3. executionAttempt 当前只在状态变为 FAILED 时累加；如果未来做“FAILED 自动重新调度”，需要进一步扩展退避策略。
+4. 执行记录 ID 已经按 idempotencyKey 确定性生成，但 idempotencyKey 字段本身还没有数据库唯一约束。
+5. RUNNING 恢复目前按 updatedAt 超时标记 FAILED，后续可细化为分 skill 的超时时间。
 ```
 
 ## 5. 后续推荐演进
@@ -350,18 +360,7 @@ uk_idempotency_key(idempotency_key)
 
 当前阶段通过确定性执行记录 ID 先提供并发占位保护，后续仍建议增加唯一约束。
 
-### 5.3 改为 action 级别保存
-
-当前 `TaskPlanRepository.save(plan)` 会删除并重插 action 行。后续调度执行建议逐步改成：
-
-```text
-1. action 级别状态更新。
-2. action 级别 schedule 字段更新。
-3. plan 状态单独刷新。
-4. 避免重建 action 行影响锁字段和执行统计字段。
-```
-
-### 5.4 增加失败退避
+### 5.3 增加失败退避
 
 后续如果允许失败任务自动重新调度，建议增加：
 
@@ -374,7 +373,7 @@ lastErrorMessage
 
 避免失败任务高频重复执行。
 
-### 5.5 细化 RUNNING 超时恢复
+### 5.4 细化 RUNNING 超时恢复
 
 后续可以继续增强：
 
@@ -402,18 +401,19 @@ lastErrorMessage
 10. 重复执行同一个 idempotencyKey 的 action，确认第二次不会调用真实执行器。
 11. 并发触发同一个 idempotencyKey，确认只有一个请求能插入 RUNNING 执行记录并进入真实执行。
 12. 手动把 ai_task_action_execution.updated_at 改到 10 分钟以前且 status=RUNNING，确认下次调度会恢复为 FAILED。
+13. 编辑或保存计划后，确认旧 action 的 idempotencyKey、executionAttempt、maxRetryCount 不会被重建丢失。
 ```
 
 ## 7. 当前结论
 
-本阶段完成的是调度可靠性的第九步：
+本阶段完成的是调度可靠性的第十步：
 
 ```text
-从执行前原子占位，升级为 RUNNING 执行记录超时恢复。
+从 plan 保存时重建 action，升级为 action 级别 upsert 保存。
 ```
 
 真正的生产级调度还需要继续完成：
 
 ```text
-历史数据回填、组合索引、唯一约束、action 级别保存、失败退避、分 skill 超时策略。
+历史数据回填、组合索引、唯一约束、失败退避、分 skill 超时策略。
 ```
