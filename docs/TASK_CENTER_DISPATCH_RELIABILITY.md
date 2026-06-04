@@ -19,9 +19,11 @@ nextRunAt
 nextRunAtEpochMs
 lastRunAt
 triggerCount
+lockedBy
+lockedAtEpochMs
 ```
 
-`TaskAction.scheduleJson` 仍然保留，用于兼容完整调度对象；独立列用于调度查询和后续索引优化。
+`TaskAction.scheduleJson` 仍然保留，用于兼容完整调度对象；独立列用于调度查询、锁抢占和后续索引优化。
 
 ## 2. 当前实现
 
@@ -37,11 +39,12 @@ public List<TaskPlan> findDueScheduledPlans(OffsetDateTime now, int limit)
 
 ```text
 1. 从 ai_task_action 查询 status = SCHEDULED 的 action。
-2. 要求 nextRunAtEpochMs 不为空。
-3. 要求 nextRunAtEpochMs <= now.toInstant().toEpochMilli()。
-4. 按 nextRunAtEpochMs 升序排序。
-5. 使用 bounded limit 限制批次数量。
-6. 再根据 planId 回查完整 TaskPlan。
+2. 要求 lockedBy 为空，或者 lockedAtEpochMs 已超时。
+3. 要求 nextRunAtEpochMs 不为空。
+4. 要求 nextRunAtEpochMs <= now.toInstant().toEpochMilli()。
+5. 按 nextRunAtEpochMs 升序排序。
+6. 使用 bounded limit 限制批次数量。
+7. 再根据 planId 回查完整 TaskPlan。
 ```
 
 为了兼容历史数据，当前保留一段兜底查询：
@@ -79,12 +82,44 @@ private static final int DEFAULT_DISPATCH_LIMIT = 100;
 2. taskPlanRepository.findDueScheduledPlans(now, limit)
 3. 遍历 plan.tasks()
 4. 对 SCHEDULED 且 schedule 不为空的 action 做最终兜底判断
-5. 到期后 executeNow
-6. 周期任务执行成功后 markTriggered 并继续保持 SCHEDULED
-7. 保存 TaskPlan 并更新 Session
+5. 执行前调用 tryLockAction 抢占 action 锁
+6. 抢锁成功后 executeNow
+7. 周期任务执行成功后 markTriggered 并继续保持 SCHEDULED
+8. finally 中 releaseActionLock
+9. 保存 TaskPlan 并更新 Session
 ```
 
 说明：Repository 已经做第一层到期过滤，`TaskDispatchService` 中的时间判断仍保留，作为兜底保护。
+
+### 2.3 锁机制
+
+`TaskPlanRepository` 提供：
+
+```java
+public boolean tryLockAction(String actionId, String lockedBy, OffsetDateTime now)
+```
+
+抢锁条件：
+
+```text
+actionId 匹配
+status = SCHEDULED
+lockedBy 为空，或者 lockedAtEpochMs 已超过锁超时时间
+```
+
+当前锁超时时间：
+
+```java
+private static final long DISPATCH_LOCK_TIMEOUT_MS = 5 * 60 * 1000L;
+```
+
+释放锁：
+
+```java
+public void releaseActionLock(String actionId, String lockedBy)
+```
+
+释放时会校验 `lockedBy`，避免实例 A 释放实例 B 的锁。
 
 ## 3. 已完成优化
 
@@ -118,7 +153,7 @@ private static final int MAX_DISPATCH_QUERY_LIMIT = 500;
 
 调用方传入 limit 时会被限制在合理范围内。
 
-### 3.3 给 action 状态和调度时间增加索引
+### 3.3 给 action 状态、调度时间和锁字段增加索引
 
 `TaskActionEntity.status` 已增加索引：
 
@@ -137,6 +172,8 @@ private String status;
 private Long nextRunAtEpochMs;
 ```
 
+`TaskActionEntity.lockedBy` 和 `lockedAtEpochMs` 已增加索引，用于过滤未加锁或锁超时的 action。
+
 `nextRunAt` 字符串字段仍保留索引，用于短期兼容旧数据兜底查询。
 
 ### 3.4 同步调度字段
@@ -150,6 +187,8 @@ nextRunAt         = schedule.effectiveRunAt()
 nextRunAtEpochMs  = OffsetDateTime.parse(schedule.effectiveRunAt()).toInstant().toEpochMilli()
 lastRunAt         = schedule.lastRunAt
 triggerCount      = schedule.triggerCount
+lockedBy          = null
+lockedAtEpochMs   = null
 ```
 
 `nextRunAt` 统一使用 `schedule.effectiveRunAt()`，即优先取 `nextRunAt`，没有时回退 `runAt`。
@@ -159,12 +198,11 @@ triggerCount      = schedule.triggerCount
 当前版本仍存在以下限制：
 
 ```text
-1. 多实例下仍可能重复扫描同一批 SCHEDULED action。
-2. action 执行过程没有 lockedBy / lockedAt。
-3. 没有 executionAttempt / maxRetryCount。
-4. 没有 idempotencyKey。
-5. 还没有 status + nextRunAtEpochMs 的组合索引。
-6. 历史数据如果没有 nextRunAtEpochMs，仍依赖 nextRunAt 字符串兜底。
+1. 没有 executionAttempt / maxRetryCount。
+2. 没有 idempotencyKey。
+3. 还没有 status + nextRunAtEpochMs + lockedBy 的组合索引。
+4. 历史数据如果没有 nextRunAtEpochMs，仍依赖 nextRunAt 字符串兜底。
+5. 当前 save(plan) 会重建 action 行，锁字段会随保存被清空；现阶段可接受，但后续应改成 action 级别更新。
 ```
 
 ## 5. 后续推荐演进
@@ -189,21 +227,21 @@ where next_run_at_epoch_ms is null
 
 ```text
 idx_status_next_run_epoch(status, next_run_at_epoch_ms)
+idx_status_lock_next_run(status, locked_by, locked_at_epoch_ms, next_run_at_epoch_ms)
 idx_plan_id_status(plan_id, status)
 ```
 
 当前阶段先使用单列索引，避免一次性改动过大。
 
-### 5.3 增加锁机制
+### 5.3 改为 action 级别保存
 
-多实例部署前，需要增加抢占机制：
+当前 `TaskPlanRepository.save(plan)` 会删除并重插 action 行。后续调度执行建议逐步改成：
 
 ```text
-1. 查询到期 action。
-2. update action set lockedBy=?, lockedAt=? where actionId=? and status='SCHEDULED' and lockedBy is null。
-3. update 成功的实例才允许执行。
-4. 执行完成后清理锁或推进状态。
-5. 超时锁由恢复任务释放。
+1. action 级别状态更新。
+2. action 级别 schedule 字段更新。
+3. plan 状态单独刷新。
+4. 避免重建 action 行影响锁字段和执行统计字段。
 ```
 
 ### 5.4 增加幂等键
@@ -225,18 +263,20 @@ idempotencyKey = planId + actionId + triggerCount
 2. 创建一个 once reminder，确认到期前不会执行，到期后执行一次。
 3. 创建一个 recurring reminder，确认执行后仍保持 SCHEDULED，并推进 nextRunAt 和 nextRunAtEpochMs。
 4. 数据库中存在大量 EXECUTED / CANCELLED plan 时，调度扫描只查询 SCHEDULED 且 nextRunAtEpochMs 已到期的 action 对应计划。
+5. 手动设置某个 action 的 lockedBy，确认未超时前不会被扫描或执行。
+6. 手动设置 lockedAtEpochMs 为 5 分钟以前，确认可以被重新抢锁执行。
 ```
 
 ## 7. 当前结论
 
-本阶段完成的是调度可靠性的第三步：
+本阶段完成的是调度可靠性的第四步：
 
 ```text
-从字符串 nextRunAt 到期过滤，升级为 epoch milliseconds 数字过滤。
+从到期查询，升级为到期查询 + action 抢锁执行。
 ```
 
 真正的生产级调度还需要继续完成：
 
 ```text
-历史数据回填、组合索引、锁、重试次数、幂等键、超时恢复。
+历史数据回填、组合索引、action 级别保存、重试次数、幂等键、超时恢复。
 ```
