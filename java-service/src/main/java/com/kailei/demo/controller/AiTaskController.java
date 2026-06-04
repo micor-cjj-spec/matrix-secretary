@@ -6,6 +6,8 @@ import com.kailei.demo.model.ConfirmTaskRequest;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.PreviewTaskRequest;
+import com.kailei.demo.model.ReopenFinalFailureRequest;
+import com.kailei.demo.model.ResolveManualReviewRequest;
 import com.kailei.demo.model.RetryTaskRequest;
 import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskPlan;
@@ -69,6 +71,20 @@ public class AiTaskController {
                                            @RequestBody(required = false) RetryTaskRequest request) {
         String operatorUserId = request == null ? null : request.operatorUserId();
         return aiTaskService.retryAction(planId, actionId, operatorUserId);
+    }
+
+    @PostMapping("/{planId}/actions/{actionId}/manual-resolve")
+    public ConfirmTaskResponse resolveManualReview(@PathVariable String planId,
+                                                   @PathVariable String actionId,
+                                                   @RequestBody(required = false) ResolveManualReviewRequest request) {
+        return aiTaskService.resolveManualReview(planId, actionId, request);
+    }
+
+    @PostMapping("/{planId}/actions/{actionId}/reopen-final-failure")
+    public ConfirmTaskResponse reopenFinalFailure(@PathVariable String planId,
+                                                  @PathVariable String actionId,
+                                                  @RequestBody(required = false) ReopenFinalFailureRequest request) {
+        return aiTaskService.reopenFinalFailure(planId, actionId, request);
     }
 
     @GetMapping("/{planId}")
