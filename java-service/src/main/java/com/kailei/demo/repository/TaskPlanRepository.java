@@ -14,6 +14,8 @@ import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.model.TaskSchedule;
 import com.kailei.demo.model.TaskStatus;
 import com.kailei.demo.model.TaskTarget;
+import com.kailei.demo.skill.SkillCatalog;
+import com.kailei.demo.skill.SkillRetryPolicy;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,21 +36,21 @@ public class TaskPlanRepository {
 
     private static final int MAX_DISPATCH_QUERY_LIMIT = 500;
     private static final long DISPATCH_LOCK_TIMEOUT_MS = 5 * 60 * 1000L;
-    private static final int DEFAULT_MAX_RETRY_COUNT = 3;
-    private static final int DEFAULT_RETRY_BACKOFF_SECONDS = 60;
-    private static final int MAX_RETRY_BACKOFF_SECONDS = 30 * 60;
     private static final String IDEMPOTENCY_KEY_ARG = "idempotencyKey";
 
     private final TaskPlanMapper taskPlanMapper;
     private final TaskActionMapper taskActionMapper;
     private final ObjectMapper objectMapper;
+    private final SkillCatalog skillCatalog;
 
     public TaskPlanRepository(TaskPlanMapper taskPlanMapper,
                               TaskActionMapper taskActionMapper,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              SkillCatalog skillCatalog) {
         this.taskPlanMapper = taskPlanMapper;
         this.taskActionMapper = taskActionMapper;
         this.objectMapper = objectMapper;
+        this.skillCatalog = skillCatalog;
     }
 
     @Transactional
@@ -258,10 +260,11 @@ public class TaskPlanRepository {
     private TaskActionEntity toActionEntity(String planId, TaskAction action, int sortOrder, TaskActionEntity existing) {
         TaskActionEntity entity = new TaskActionEntity();
         TaskSchedule schedule = action.schedule();
+        SkillRetryPolicy retryPolicy = retryPolicy(action);
         String effectiveRunAt = schedule == null ? null : schedule.effectiveRunAt();
         String idempotencyKey = resolveIdempotencyKey(planId, action, schedule, existing);
         int nextExecutionAttempt = resolveNextExecutionAttempt(action, existing);
-        int retryBackoffSeconds = resolveRetryBackoffSeconds(action, existing, nextExecutionAttempt);
+        int retryBackoffSeconds = resolveRetryBackoffSeconds(action, existing, nextExecutionAttempt, retryPolicy);
         entity.setActionId(action.actionId());
         entity.setPlanId(planId);
         entity.setActionType(action.actionType());
@@ -277,7 +280,7 @@ public class TaskPlanRepository {
         entity.setLastRunAt(schedule == null ? null : limit(schedule.lastRunAt(), 64));
         entity.setTriggerCount(schedule == null ? 0 : schedule.triggerCount());
         entity.setExecutionAttempt(nextExecutionAttempt);
-        entity.setMaxRetryCount(resolveMaxRetryCount(existing));
+        entity.setMaxRetryCount(resolveMaxRetryCount(existing, retryPolicy));
         entity.setNextRetryAtEpochMs(resolveNextRetryAtEpochMs(action, existing, retryBackoffSeconds));
         entity.setRetryBackoffSeconds(retryBackoffSeconds);
         entity.setLastErrorMessage(resolveLastErrorMessage(action));
@@ -295,6 +298,10 @@ public class TaskPlanRepository {
         return entity;
     }
 
+    private SkillRetryPolicy retryPolicy(TaskAction action) {
+        return skillCatalog.getOrUnknown(action.actionType()).retry();
+    }
+
     private int resolveNextExecutionAttempt(TaskAction action, TaskActionEntity existing) {
         int currentAttempt = existing == null || existing.getExecutionAttempt() == null ? 0 : existing.getExecutionAttempt();
         String existingStatus = existing == null ? null : existing.getStatus();
@@ -307,29 +314,32 @@ public class TaskPlanRepository {
         return currentAttempt;
     }
 
-    private int resolveMaxRetryCount(TaskActionEntity existing) {
+    private int resolveMaxRetryCount(TaskActionEntity existing, SkillRetryPolicy retryPolicy) {
         if (existing == null || existing.getMaxRetryCount() == null || existing.getMaxRetryCount() <= 0) {
-            return DEFAULT_MAX_RETRY_COUNT;
+            return retryPolicy.maxRetryCount();
         }
         return existing.getMaxRetryCount();
     }
 
-    private int resolveRetryBackoffSeconds(TaskAction action, TaskActionEntity existing, int nextExecutionAttempt) {
+    private int resolveRetryBackoffSeconds(TaskAction action,
+                                           TaskActionEntity existing,
+                                           int nextExecutionAttempt,
+                                           SkillRetryPolicy retryPolicy) {
         if (action.status() == TaskStatus.EXECUTED) {
-            return DEFAULT_RETRY_BACKOFF_SECONDS;
+            return retryPolicy.initialBackoffSeconds();
         }
         if (action.status() != TaskStatus.FAILED) {
             return existing == null || existing.getRetryBackoffSeconds() == null
-                    ? DEFAULT_RETRY_BACKOFF_SECONDS
+                    ? retryPolicy.initialBackoffSeconds()
                     : existing.getRetryBackoffSeconds();
         }
         int previousBackoff = existing == null || existing.getRetryBackoffSeconds() == null || existing.getRetryBackoffSeconds() <= 0
-                ? DEFAULT_RETRY_BACKOFF_SECONDS
+                ? retryPolicy.initialBackoffSeconds()
                 : existing.getRetryBackoffSeconds();
         if (nextExecutionAttempt <= 1) {
             return previousBackoff;
         }
-        return Math.min(previousBackoff * 2, MAX_RETRY_BACKOFF_SECONDS);
+        return Math.min(previousBackoff * 2, retryPolicy.maxBackoffSeconds());
     }
 
     private Long resolveNextRetryAtEpochMs(TaskAction action, TaskActionEntity existing, int retryBackoffSeconds) {
