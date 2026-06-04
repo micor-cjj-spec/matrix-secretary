@@ -1,6 +1,7 @@
 package com.kailei.demo.repository;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kailei.demo.entity.TaskActionExecutionEntity;
@@ -8,9 +9,14 @@ import com.kailei.demo.mapper.TaskActionExecutionMapper;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskStatus;
 import com.kailei.demo.skill.SkillDefinition;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -19,6 +25,7 @@ import java.util.UUID;
 public class TaskActionExecutionRepository {
 
     private static final String IDEMPOTENCY_KEY_ARG = "idempotencyKey";
+    private static final String RUNNING = "RUNNING";
 
     private final TaskActionExecutionMapper mapper;
     private final ObjectMapper objectMapper;
@@ -28,13 +35,63 @@ public class TaskActionExecutionRepository {
         this.objectMapper = objectMapper;
     }
 
+    public ExecutionClaim tryBeginExecution(String planId,
+                                            String userId,
+                                            SkillDefinition skill,
+                                            TaskAction action,
+                                            String operatorUserId) {
+        String idempotencyKey = idempotencyKey(action);
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return ExecutionClaim.acquired(null);
+        }
+
+        Optional<TaskActionExecutionEntity> existing = findByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {
+            TaskActionExecutionEntity entity = existing.get();
+            if (TaskStatus.EXECUTED.name().equals(entity.getStatus())) {
+                return ExecutionClaim.executed(entity);
+            }
+            if (RUNNING.equals(entity.getStatus())) {
+                return ExecutionClaim.running(entity);
+            }
+            if (tryMarkRunning(entity.getId(), userId, skill, action, operatorUserId)) {
+                return ExecutionClaim.acquired(entity.getId());
+            }
+            return findByIdempotencyKey(idempotencyKey)
+                    .map(this::claimFromExisting)
+                    .orElseGet(() -> ExecutionClaim.running(null));
+        }
+
+        TaskActionExecutionEntity running = buildBaseEntity(
+                deterministicId(idempotencyKey),
+                planId,
+                userId,
+                skill,
+                action,
+                operatorUserId,
+                RUNNING
+        );
+        try {
+            mapper.insert(running);
+            return ExecutionClaim.acquired(running.getId());
+        } catch (DuplicateKeyException ex) {
+            return findByIdempotencyKey(idempotencyKey)
+                    .map(this::claimFromExisting)
+                    .orElseGet(() -> ExecutionClaim.running(null));
+        }
+    }
+
     public Optional<TaskActionExecutionEntity> findExecutedByIdempotencyKey(String idempotencyKey) {
+        return findByIdempotencyKey(idempotencyKey)
+                .filter(entity -> TaskStatus.EXECUTED.name().equals(entity.getStatus()));
+    }
+
+    public Optional<TaskActionExecutionEntity> findByIdempotencyKey(String idempotencyKey) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             return Optional.empty();
         }
         return Optional.ofNullable(mapper.selectOne(new LambdaQueryWrapper<TaskActionExecutionEntity>()
                 .eq(TaskActionExecutionEntity::getIdempotencyKey, idempotencyKey)
-                .eq(TaskActionExecutionEntity::getStatus, TaskStatus.EXECUTED.name())
                 .last("limit 1")));
     }
 
@@ -44,26 +101,36 @@ public class TaskActionExecutionRepository {
                                             TaskAction before,
                                             TaskAction after,
                                             String operatorUserId) {
-        OffsetDateTime now = OffsetDateTime.now();
-        TaskActionExecutionEntity entity = new TaskActionExecutionEntity();
-        entity.setId("exec-" + UUID.randomUUID().toString().substring(0, 12));
-        entity.setPlanId(planId);
-        entity.setActionId(before.actionId());
-        entity.setIdempotencyKey(idempotencyKey(before));
-        entity.setSkillName(skill.name());
-        entity.setStatus(after.status().name());
-        entity.setRequestPayload(writeJson(Map.of(
-                "userId", userId,
-                "action", before
-        )));
+        String idempotencyKey = idempotencyKey(before);
+        Optional<TaskActionExecutionEntity> existing = findByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {
+            TaskActionExecutionEntity entity = existing.get();
+            entity.setStatus(after.status().name());
+            entity.setResponsePayload(writeJson(Map.of(
+                    "action", after,
+                    "executionNote", after.executionNote()
+            )));
+            entity.setErrorMessage(after.status() == TaskStatus.FAILED ? after.executionNote() : null);
+            entity.setOperatorUserId(operatorUserId);
+            entity.setUpdatedAt(OffsetDateTime.now());
+            mapper.updateById(entity);
+            return entity;
+        }
+
+        TaskActionExecutionEntity entity = buildBaseEntity(
+                fallbackId(idempotencyKey),
+                planId,
+                userId,
+                skill,
+                before,
+                operatorUserId,
+                after.status().name()
+        );
         entity.setResponsePayload(writeJson(Map.of(
                 "action", after,
                 "executionNote", after.executionNote()
         )));
         entity.setErrorMessage(after.status() == TaskStatus.FAILED ? after.executionNote() : null);
-        entity.setOperatorUserId(operatorUserId);
-        entity.setCreatedAt(now);
-        entity.setUpdatedAt(now);
         mapper.insert(entity);
         return entity;
     }
@@ -76,11 +143,105 @@ public class TaskActionExecutionRepository {
         return value == null ? null : String.valueOf(value);
     }
 
+    private boolean tryMarkRunning(String id,
+                                   String userId,
+                                   SkillDefinition skill,
+                                   TaskAction action,
+                                   String operatorUserId) {
+        TaskActionExecutionEntity update = new TaskActionExecutionEntity();
+        update.setStatus(RUNNING);
+        update.setSkillName(skill.name());
+        update.setRequestPayload(writeJson(Map.of(
+                "userId", userId,
+                "action", action
+        )));
+        update.setResponsePayload(null);
+        update.setErrorMessage(null);
+        update.setOperatorUserId(operatorUserId);
+        update.setUpdatedAt(OffsetDateTime.now());
+        int updated = mapper.update(update, new LambdaUpdateWrapper<TaskActionExecutionEntity>()
+                .eq(TaskActionExecutionEntity::getId, id)
+                .ne(TaskActionExecutionEntity::getStatus, TaskStatus.EXECUTED.name())
+                .ne(TaskActionExecutionEntity::getStatus, RUNNING));
+        return updated == 1;
+    }
+
+    private ExecutionClaim claimFromExisting(TaskActionExecutionEntity entity) {
+        if (TaskStatus.EXECUTED.name().equals(entity.getStatus())) {
+            return ExecutionClaim.executed(entity);
+        }
+        return ExecutionClaim.running(entity);
+    }
+
+    private TaskActionExecutionEntity buildBaseEntity(String id,
+                                                      String planId,
+                                                      String userId,
+                                                      SkillDefinition skill,
+                                                      TaskAction action,
+                                                      String operatorUserId,
+                                                      String status) {
+        OffsetDateTime now = OffsetDateTime.now();
+        TaskActionExecutionEntity entity = new TaskActionExecutionEntity();
+        entity.setId(id);
+        entity.setPlanId(planId);
+        entity.setActionId(action.actionId());
+        entity.setIdempotencyKey(idempotencyKey(action));
+        entity.setSkillName(skill.name());
+        entity.setStatus(status);
+        entity.setRequestPayload(writeJson(Map.of(
+                "userId", userId,
+                "action", action
+        )));
+        entity.setResponsePayload(null);
+        entity.setErrorMessage(null);
+        entity.setOperatorUserId(operatorUserId);
+        entity.setCreatedAt(now);
+        entity.setUpdatedAt(now);
+        return entity;
+    }
+
+    private String fallbackId(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return "exec-" + UUID.randomUUID().toString().substring(0, 12);
+        }
+        return deterministicId(idempotencyKey);
+    }
+
+    private String deterministicId(String idempotencyKey) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(idempotencyKey.getBytes(StandardCharsets.UTF_8));
+            return "exec-" + HexFormat.of().formatHex(hash).substring(0, 32);
+        } catch (NoSuchAlgorithmException ex) {
+            return "exec-" + UUID.nameUUIDFromBytes(idempotencyKey.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
     private String writeJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (JsonProcessingException ex) {
             return "{}";
+        }
+    }
+
+    public enum ClaimStatus {
+        ACQUIRED,
+        EXECUTED,
+        RUNNING
+    }
+
+    public record ExecutionClaim(ClaimStatus status, String executionId, TaskActionExecutionEntity existing) {
+        public static ExecutionClaim acquired(String executionId) {
+            return new ExecutionClaim(ClaimStatus.ACQUIRED, executionId, null);
+        }
+
+        public static ExecutionClaim executed(TaskActionExecutionEntity existing) {
+            return new ExecutionClaim(ClaimStatus.EXECUTED, existing == null ? null : existing.getId(), existing);
+        }
+
+        public static ExecutionClaim running(TaskActionExecutionEntity existing) {
+            return new ExecutionClaim(ClaimStatus.RUNNING, existing == null ? null : existing.getId(), existing);
         }
     }
 }
