@@ -37,6 +37,7 @@ public class AiTaskService {
     private final TaskExecutionLogRepository executionLogRepository;
     private final AiSessionRepository sessionRepository;
     private final TaskStateMachineService stateMachineService;
+    private final TaskQueryService taskQueryService;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
@@ -45,7 +46,8 @@ public class AiTaskService {
                          CronScheduleService cronScheduleService,
                          TaskExecutionLogRepository executionLogRepository,
                          AiSessionRepository sessionRepository,
-                         TaskStateMachineService stateMachineService) {
+                         TaskStateMachineService stateMachineService,
+                         TaskQueryService taskQueryService) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
@@ -54,6 +56,7 @@ public class AiTaskService {
         this.executionLogRepository = executionLogRepository;
         this.sessionRepository = sessionRepository;
         this.stateMachineService = stateMachineService;
+        this.taskQueryService = taskQueryService;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
@@ -234,39 +237,27 @@ public class AiTaskService {
     }
 
     public TaskPlan get(String planId) {
-        return repository.findById(planId)
-                .orElseThrow(() -> new IllegalArgumentException("任务计划不存在: " + planId));
+        return taskQueryService.get(planId);
     }
 
     public TaskPlan get(String planId, String userId) {
-        TaskPlan plan = get(planId);
-        ensureSameUser(plan, userId);
-        return plan;
+        return taskQueryService.get(planId, userId);
     }
 
     public List<TaskPlan> list(String userId) {
-        if (userId == null || userId.isBlank()) {
-            return repository.findAll();
-        }
-        return repository.findByUserId(userId);
+        return taskQueryService.list(userId);
     }
 
     public List<TaskPlan> list() {
-        return list(null);
+        return taskQueryService.list();
     }
 
     public SessionState getSession(String sessionId, String userId) {
-        SessionState session = sessionRepository.findById(sessionId)
-                .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + sessionId));
-        if (userId != null && !userId.isBlank() && session.userId() != null && !session.userId().equals(userId)) {
-            throw new IllegalArgumentException("会话不存在或无权访问: " + sessionId);
-        }
-        return session;
+        return taskQueryService.getSession(sessionId, userId);
     }
 
     public List<TaskPlan> listBySession(String sessionId, String userId) {
-        getSession(sessionId, userId);
-        return repository.findByUserIdAndSessionId(userId, sessionId);
+        return taskQueryService.listBySession(sessionId, userId);
     }
 
     public void dispatchDueOnceTasks() {
@@ -280,15 +271,6 @@ public class AiTaskService {
                 sessionRepository.updateAfterPlanChange(saved);
             }
         });
-    }
-
-    private void ensureSameUser(TaskPlan plan, String userId) {
-        if (userId == null || userId.isBlank()) {
-            return;
-        }
-        if (plan.userId() == null || !plan.userId().equals(userId)) {
-            throw new IllegalArgumentException("任务计划不存在或无权访问: " + plan.planId());
-        }
     }
 
     private void ensureOperatorCanAccess(TaskPlan plan, String operatorUserId) {
