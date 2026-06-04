@@ -90,6 +90,17 @@ public class TaskActionEntity {
     private Integer maxRetryCount;
 
     @Index
+    @ColumnComment("下一次重试时间epoch毫秒")
+    private Long nextRetryAtEpochMs;
+
+    @ColumnComment("重试退避秒数")
+    private Integer retryBackoffSeconds;
+
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 1024)
+    @ColumnComment("最近一次错误信息")
+    private String lastErrorMessage;
+
+    @Index
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 128)
     @ColumnComment("执行幂等键")
     private String idempotencyKey;
@@ -168,6 +179,12 @@ public class TaskActionEntity {
     public void setExecutionAttempt(Integer executionAttempt) { this.executionAttempt = executionAttempt; }
     public Integer getMaxRetryCount() { return maxRetryCount; }
     public void setMaxRetryCount(Integer maxRetryCount) { this.maxRetryCount = maxRetryCount; }
+    public Long getNextRetryAtEpochMs() { return nextRetryAtEpochMs; }
+    public void setNextRetryAtEpochMs(Long nextRetryAtEpochMs) { this.nextRetryAtEpochMs = nextRetryAtEpochMs; }
+    public Integer getRetryBackoffSeconds() { return retryBackoffSeconds; }
+    public void setRetryBackoffSeconds(Integer retryBackoffSeconds) { this.retryBackoffSeconds = retryBackoffSeconds; }
+    public String getLastErrorMessage() { return lastErrorMessage; }
+    public void setLastErrorMessage(String lastErrorMessage) { this.lastErrorMessage = lastErrorMessage; }
     public String getIdempotencyKey() { return idempotencyKey; }
     public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
     public String getArgsJson() { return argsJson; }
