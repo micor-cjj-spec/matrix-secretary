@@ -3,6 +3,8 @@ package com.kailei.demo.service;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.PreviewTaskRequest;
+import com.kailei.demo.model.ReopenFinalFailureRequest;
+import com.kailei.demo.model.ResolveManualReviewRequest;
 import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskPlan;
 import org.springframework.stereotype.Service;
@@ -45,6 +47,14 @@ public class AiTaskService {
 
     public ConfirmTaskResponse retryAction(String planId, String actionId, String operatorUserId) {
         return taskCommandService.retryAction(planId, actionId, operatorUserId);
+    }
+
+    public ConfirmTaskResponse resolveManualReview(String planId, String actionId, ResolveManualReviewRequest request) {
+        return taskCommandService.resolveManualReview(planId, actionId, request);
+    }
+
+    public ConfirmTaskResponse reopenFinalFailure(String planId, String actionId, ReopenFinalFailureRequest request) {
+        return taskCommandService.reopenFinalFailure(planId, actionId, request);
     }
 
     public TaskPlan get(String planId) {
