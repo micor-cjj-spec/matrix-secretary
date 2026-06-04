@@ -64,13 +64,21 @@ public class GenericSkillExecutor {
     private TaskAction executeBuiltin(String planId, String userId, SkillDefinition skill, TaskAction action) {
         String executor = skill.execution().executor();
         return switch (executor == null ? "" : executor) {
-            case "reminder" -> createNotification(planId, userId, action, "REMINDER", "已创建站内提醒");
+            case "reminder" -> executeReminder(planId, userId, skill, action);
             case "todo" -> createNotification(planId, userId, action, "TODO", "已创建站内待办");
             case "email" -> createEmailDraftAndMaybeSend(planId, userId, action);
             case "message", "reply" -> executeChannelMessage(planId, userId, skill, action);
             case "schedule" -> mockExecuted(skill, action, "模拟创建定时任务: " + action.content());
             default -> mockExecuted(skill, action, "模拟执行 Skill[" + skill.name() + "]: " + action.content());
         };
+    }
+
+    private TaskAction executeReminder(String planId, String userId, SkillDefinition skill, TaskAction action) {
+        if (isFeishuUser(userId) || "feishu".equalsIgnoreCase(stringArg(action, "platform"))) {
+            TaskAction channelAction = withReminderMessage(action);
+            return executeChannelMessage(planId, userId, skill, channelAction);
+        }
+        return createNotification(planId, userId, action, "REMINDER", "已创建站内提醒");
     }
 
     private TaskAction executeChannelMessage(String planId, String userId, SkillDefinition skill, TaskAction action) {
@@ -80,6 +88,24 @@ public class GenericSkillExecutor {
             log.warn("Channel message skill [{}] action [{}] failed", skill.name(), action.actionId(), ex);
             return action.withStatus(TaskStatus.FAILED, "渠道消息发送失败: " + ex.getClass().getSimpleName());
         }
+    }
+
+    private TaskAction withReminderMessage(TaskAction action) {
+        String content = action.content();
+        String message = content == null || content.isBlank() ? "该处理提醒事项了" : content;
+        if ("喝水".equals(message) || message.startsWith("喝水")) {
+            message = "该喝水了";
+        }
+        return action.withEditableFields(null, message, null, null, null, null, null);
+    }
+
+    private boolean isFeishuUser(String userId) {
+        return userId != null && userId.startsWith("feishu:");
+    }
+
+    private String stringArg(TaskAction action, String key) {
+        Object value = action.args().get(key);
+        return value == null ? null : String.valueOf(value);
     }
 
     private TaskAction createNotification(String planId, String userId, TaskAction action, String type, String prefix) {
