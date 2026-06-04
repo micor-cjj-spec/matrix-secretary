@@ -12,7 +12,8 @@ public record SkillDefinition(
         String riskLevel,
         Boolean requiresConfirmation,
         Map<String, Object> inputSchema,
-        SkillExecution execution
+        SkillExecution execution,
+        SkillRetryPolicy retry
 ) {
 
     public SkillDefinition {
@@ -20,6 +21,7 @@ public record SkillDefinition(
         inputSchema = inputSchema == null ? Map.of() : Map.copyOf(inputSchema);
         riskLevel = riskLevel == null || riskLevel.isBlank() ? "LOW" : riskLevel;
         requiresConfirmation = Boolean.TRUE.equals(requiresConfirmation);
+        retry = retry == null ? SkillRetryPolicy.defaults() : retry;
     }
 
     public boolean supportsActionType(String candidateActionType) {
@@ -36,7 +38,8 @@ public record SkillDefinition(
                 "HIGH",
                 true,
                 Map.of(),
-                new SkillExecution("noop", null, null, null, Map.of(), Map.of(), Map.of())
+                new SkillExecution("noop", null, null, null, Map.of(), Map.of(), Map.of()),
+                SkillRetryPolicy.defaults()
         );
     }
 }
