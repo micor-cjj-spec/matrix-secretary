@@ -75,6 +75,7 @@ public class TaskActionEntity {
     @ColumnComment("语义解析备注")
     private String analysisNote;
 
+    @Index
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 32)
     @ColumnComment("动作状态")
     private String status;
