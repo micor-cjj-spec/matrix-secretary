@@ -56,6 +56,13 @@ public class TaskDispatchService {
         if (recovered > 0) {
             log.warn("Recovered stale RUNNING task action executions: count={}", recovered);
         }
+        List<TaskPlan> retryPlans = taskPlanRepository.rescheduleRetryableFailedPlans(now, limit);
+        if (!retryPlans.isEmpty()) {
+            retryPlans.forEach(plan -> sessionRepository.updateAfterPlanChange(
+                    plan.withStatus(stateMachineService.resolvePlanStatus(plan.tasks()), plan.tasks())
+            ));
+            log.info("Rescheduled retryable FAILED task plans: count={}", retryPlans.size());
+        }
         taskPlanRepository.findDueScheduledPlans(now, limit).forEach(plan -> {
             List<TaskAction> nextActions = plan.tasks().stream()
                     .map(action -> dispatchIfDue(plan, action, now))
