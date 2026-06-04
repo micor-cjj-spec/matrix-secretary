@@ -16,6 +16,7 @@
 scheduleType
 runAt
 nextRunAt
+nextRunAtEpochMs
 lastRunAt
 triggerCount
 ```
@@ -32,19 +33,24 @@ triggerCount
 public List<TaskPlan> findDueScheduledPlans(OffsetDateTime now, int limit)
 ```
 
-当前查询逻辑：
+当前主查询逻辑：
 
 ```text
 1. 从 ai_task_action 查询 status = SCHEDULED 的 action。
-2. 要求 nextRunAt 不为空。
-3. 要求 nextRunAt <= now。
-4. 按 nextRunAt 升序排序。
-5. 按 planId 分组。
-6. 使用 bounded limit 限制批次数量。
-7. 再根据 planId 回查完整 TaskPlan。
+2. 要求 nextRunAtEpochMs 不为空。
+3. 要求 nextRunAtEpochMs <= now.toInstant().toEpochMilli()。
+4. 按 nextRunAtEpochMs 升序排序。
+5. 使用 bounded limit 限制批次数量。
+6. 再根据 planId 回查完整 TaskPlan。
 ```
 
-当前版本已经不再依赖全量扫描，也不再只靠 Java 侧判断所有 scheduled action 是否到期。
+为了兼容历史数据，当前保留一段兜底查询：
+
+```text
+当 nextRunAtEpochMs 为空时，使用 nextRunAt 字符串做短期兜底过滤。
+```
+
+等历史数据通过任务重新保存或迁移脚本完成回填后，可以删除该兜底分支。
 
 ### 2.2 Dispatch 扫描
 
@@ -123,27 +129,27 @@ private static final int MAX_DISPATCH_QUERY_LIMIT = 500;
 private String status;
 ```
 
-`TaskActionEntity.nextRunAt` 已增加索引：
+`TaskActionEntity.nextRunAtEpochMs` 已增加索引：
 
 ```java
 @Index
-@ColumnType(value = MysqlTypeConstant.VARCHAR, length = 64)
-@ColumnComment("下一次执行时间")
-private String nextRunAt;
+@ColumnComment("下一次执行时间epoch毫秒")
+private Long nextRunAtEpochMs;
 ```
 
-当前 `planId` 已有索引，`status` 和 `nextRunAt` 也有索引，能支撑当前阶段的到期调度查询。
+`nextRunAt` 字符串字段仍保留索引，用于短期兼容旧数据兜底查询。
 
 ### 3.4 同步调度字段
 
 保存 `TaskActionEntity` 时会从 `TaskSchedule` 同步：
 
 ```text
-scheduleType = schedule.scheduleType
-runAt        = schedule.runAt
-nextRunAt    = schedule.effectiveRunAt()
-lastRunAt    = schedule.lastRunAt
-triggerCount = schedule.triggerCount
+scheduleType      = schedule.scheduleType
+runAt             = schedule.runAt
+nextRunAt         = schedule.effectiveRunAt()
+nextRunAtEpochMs  = OffsetDateTime.parse(schedule.effectiveRunAt()).toInstant().toEpochMilli()
+lastRunAt         = schedule.lastRunAt
+triggerCount      = schedule.triggerCount
 ```
 
 `nextRunAt` 统一使用 `schedule.effectiveRunAt()`，即优先取 `nextRunAt`，没有时回退 `runAt`。
@@ -153,40 +159,36 @@ triggerCount = schedule.triggerCount
 当前版本仍存在以下限制：
 
 ```text
-1. nextRunAt 当前使用字符串存储，不是数据库 datetime 类型。
-2. 多实例下仍可能重复扫描同一批 SCHEDULED action。
-3. action 执行过程没有 lockedBy / lockedAt。
-4. 没有 executionAttempt / maxRetryCount。
-5. 没有 idempotencyKey。
-6. 还没有 status + nextRunAt 的组合索引。
+1. 多实例下仍可能重复扫描同一批 SCHEDULED action。
+2. action 执行过程没有 lockedBy / lockedAt。
+3. 没有 executionAttempt / maxRetryCount。
+4. 没有 idempotencyKey。
+5. 还没有 status + nextRunAtEpochMs 的组合索引。
+6. 历史数据如果没有 nextRunAtEpochMs，仍依赖 nextRunAt 字符串兜底。
 ```
 
 ## 5. 后续推荐演进
 
-### 5.1 时间字段类型升级
+### 5.1 历史数据回填
 
-后续建议把 `runAt / nextRunAt / lastRunAt` 从字符串升级为数据库时间类型，或者统一存储 epoch milliseconds。
+建议后续提供一次性迁移脚本：
 
-推荐优先级：
-
-```text
-epoch milliseconds > datetime + timezone 额外字段 > varchar ISO 字符串
+```sql
+-- 伪代码：真实 SQL 需要根据数据库版本和 JSON 格式调整
+update ai_task_action
+set next_run_at_epoch_ms = parse_epoch_ms(next_run_at)
+where next_run_at_epoch_ms is null
+  and next_run_at is not null;
 ```
 
-原因：
-
-```text
-ISO 字符串在不同时区 offset 下做字典序比较存在边界风险。
-```
-
-当前版本建议尽量保持同一 timezone 生成调度时间。
+也可以用 Java migration runner 读取 `nextRunAt` 后调用 `OffsetDateTime.parse(...).toInstant().toEpochMilli()` 回填。
 
 ### 5.2 增加组合索引
 
-当时间字段类型稳定后，推荐组合索引：
+当历史数据回填完成后，推荐组合索引：
 
 ```text
-idx_status_next_run_at(status, next_run_at)
+idx_status_next_run_epoch(status, next_run_at_epoch_ms)
 idx_plan_id_status(plan_id, status)
 ```
 
@@ -221,20 +223,20 @@ idempotencyKey = planId + actionId + triggerCount
 ```text
 1. 创建一个立即执行任务，确认不被调度扫描重复执行。
 2. 创建一个 once reminder，确认到期前不会执行，到期后执行一次。
-3. 创建一个 recurring reminder，确认执行后仍保持 SCHEDULED，并推进 nextRunAt。
-4. 数据库中存在大量 EXECUTED / CANCELLED plan 时，调度扫描只查询 SCHEDULED 且 nextRunAt 已到期的 action 对应计划。
+3. 创建一个 recurring reminder，确认执行后仍保持 SCHEDULED，并推进 nextRunAt 和 nextRunAtEpochMs。
+4. 数据库中存在大量 EXECUTED / CANCELLED plan 时，调度扫描只查询 SCHEDULED 且 nextRunAtEpochMs 已到期的 action 对应计划。
 ```
 
 ## 7. 当前结论
 
-本阶段完成的是调度可靠性的第二步：
+本阶段完成的是调度可靠性的第三步：
 
 ```text
-从有界扫描 SCHEDULED action，升级为有界扫描 SCHEDULED 且 nextRunAt 已到期的 action。
+从字符串 nextRunAt 到期过滤，升级为 epoch milliseconds 数字过滤。
 ```
 
 真正的生产级调度还需要继续完成：
 
 ```text
-时间字段类型升级、组合索引、锁、重试次数、幂等键、超时恢复。
+历史数据回填、组合索引、锁、重试次数、幂等键、超时恢复。
 ```
