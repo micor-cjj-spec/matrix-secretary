@@ -63,6 +63,10 @@ public class TaskActionEntity {
     @ColumnComment("下一次执行时间")
     private String nextRunAt;
 
+    @Index
+    @ColumnComment("下一次执行时间epoch毫秒")
+    private Long nextRunAtEpochMs;
+
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 64)
     @ColumnComment("上一次执行时间")
     private String lastRunAt;
@@ -130,6 +134,8 @@ public class TaskActionEntity {
     public void setRunAt(String runAt) { this.runAt = runAt; }
     public String getNextRunAt() { return nextRunAt; }
     public void setNextRunAt(String nextRunAt) { this.nextRunAt = nextRunAt; }
+    public Long getNextRunAtEpochMs() { return nextRunAtEpochMs; }
+    public void setNextRunAtEpochMs(Long nextRunAtEpochMs) { this.nextRunAtEpochMs = nextRunAtEpochMs; }
     public String getLastRunAt() { return lastRunAt; }
     public void setLastRunAt(String lastRunAt) { this.lastRunAt = lastRunAt; }
     public Integer getTriggerCount() { return triggerCount; }
