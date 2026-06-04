@@ -6,5 +6,7 @@ public enum TaskStatus {
     SCHEDULED,
     EXECUTED,
     FAILED,
+    FAILED_FINAL,
+    NEEDS_MANUAL_REVIEW,
     CANCELLED
 }
