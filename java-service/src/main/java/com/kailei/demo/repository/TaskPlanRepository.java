@@ -1,6 +1,7 @@
 package com.kailei.demo.repository;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,6 +30,7 @@ import java.util.Set;
 public class TaskPlanRepository {
 
     private static final int MAX_DISPATCH_QUERY_LIMIT = 500;
+    private static final long DISPATCH_LOCK_TIMEOUT_MS = 5 * 60 * 1000L;
 
     private final TaskPlanMapper taskPlanMapper;
     private final TaskActionMapper taskActionMapper;
@@ -81,6 +83,9 @@ public class TaskPlanRepository {
         taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
                         .select(TaskActionEntity::getPlanId)
                         .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                        .and(wrapper -> wrapper.isNull(TaskActionEntity::getLockedBy)
+                                .or()
+                                .lt(TaskActionEntity::getLockedAtEpochMs, nowEpochMs - DISPATCH_LOCK_TIMEOUT_MS))
                         .isNotNull(TaskActionEntity::getNextRunAtEpochMs)
                         .le(TaskActionEntity::getNextRunAtEpochMs, nowEpochMs)
                         .orderByAsc(TaskActionEntity::getNextRunAtEpochMs)
@@ -95,6 +100,9 @@ public class TaskPlanRepository {
             taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
                             .select(TaskActionEntity::getPlanId)
                             .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                            .and(wrapper -> wrapper.isNull(TaskActionEntity::getLockedBy)
+                                    .or()
+                                    .lt(TaskActionEntity::getLockedAtEpochMs, nowEpochMs - DISPATCH_LOCK_TIMEOUT_MS))
                             .isNull(TaskActionEntity::getNextRunAtEpochMs)
                             .isNotNull(TaskActionEntity::getNextRunAt)
                             .ne(TaskActionEntity::getNextRunAt, "")
@@ -112,6 +120,30 @@ public class TaskPlanRepository {
                 .map(this::findById)
                 .flatMap(Optional::stream)
                 .toList();
+    }
+
+    public boolean tryLockAction(String actionId, String lockedBy, OffsetDateTime now) {
+        long nowEpochMs = now.toInstant().toEpochMilli();
+        long expiredBefore = nowEpochMs - DISPATCH_LOCK_TIMEOUT_MS;
+        TaskActionEntity entity = new TaskActionEntity();
+        entity.setLockedBy(lockedBy);
+        entity.setLockedAtEpochMs(nowEpochMs);
+        int updated = taskActionMapper.update(entity, new LambdaUpdateWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getActionId, actionId)
+                .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                .and(wrapper -> wrapper.isNull(TaskActionEntity::getLockedBy)
+                        .or()
+                        .lt(TaskActionEntity::getLockedAtEpochMs, expiredBefore)));
+        return updated == 1;
+    }
+
+    public void releaseActionLock(String actionId, String lockedBy) {
+        TaskActionEntity entity = new TaskActionEntity();
+        entity.setLockedBy(null);
+        entity.setLockedAtEpochMs(null);
+        taskActionMapper.update(entity, new LambdaUpdateWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getActionId, actionId)
+                .eq(TaskActionEntity::getLockedBy, lockedBy));
     }
 
     public List<TaskPlan> findByUserId(String userId) {
@@ -174,6 +206,8 @@ public class TaskPlanRepository {
         entity.setNextRunAtEpochMs(toEpochMs(effectiveRunAt));
         entity.setLastRunAt(schedule == null ? null : limit(schedule.lastRunAt(), 64));
         entity.setTriggerCount(schedule == null ? 0 : schedule.triggerCount());
+        entity.setLockedBy(null);
+        entity.setLockedAtEpochMs(null);
         entity.setArgsJson(writeJson(action.args()));
         entity.setPriority(limit(action.priority(), 32));
         entity.setRiskLevel(limit(action.riskLevel(), 32));
