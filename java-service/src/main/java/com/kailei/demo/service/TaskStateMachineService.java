@@ -49,6 +49,12 @@ public class TaskStateMachineService {
         }
     }
 
+    public void ensureCanReopenFinalFailure(TaskPlan plan, TaskAction action) {
+        if (action.status() != TaskStatus.FAILED_FINAL) {
+            throw new IllegalArgumentException("只有 FAILED_FINAL 状态的动作允许重新打开: " + action.actionId());
+        }
+    }
+
     public TaskStatus resolvePlanStatus(List<TaskAction> actions) {
         if (actions.stream().allMatch(action -> action.status() == TaskStatus.CANCELLED)) {
             return TaskStatus.CANCELLED;
