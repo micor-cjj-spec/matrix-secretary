@@ -71,10 +71,15 @@ public class TaskPlanRepository {
 
     public List<TaskPlan> findDueScheduledPlans(OffsetDateTime now, int limit) {
         int boundedLimit = Math.max(1, Math.min(limit, MAX_DISPATCH_QUERY_LIMIT));
+        String nowText = now.toString();
         List<String> planIds = taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
                         .select(TaskActionEntity::getPlanId)
                         .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                        .isNotNull(TaskActionEntity::getNextRunAt)
+                        .ne(TaskActionEntity::getNextRunAt, "")
+                        .le(TaskActionEntity::getNextRunAt, nowText)
                         .groupBy(TaskActionEntity::getPlanId)
+                        .orderByAsc(TaskActionEntity::getNextRunAt)
                         .last("limit " + boundedLimit))
                 .stream()
                 .map(TaskActionEntity::getPlanId)
@@ -131,6 +136,7 @@ public class TaskPlanRepository {
 
     private TaskActionEntity toActionEntity(String planId, TaskAction action, int sortOrder) {
         TaskActionEntity entity = new TaskActionEntity();
+        TaskSchedule schedule = action.schedule();
         entity.setActionId(action.actionId());
         entity.setPlanId(planId);
         entity.setActionType(action.actionType());
@@ -138,7 +144,12 @@ public class TaskPlanRepository {
         entity.setTitle(limit(action.title(), 255));
         entity.setContent(action.content());
         entity.setTargetJson(writeJson(action.target()));
-        entity.setScheduleJson(writeJson(action.schedule()));
+        entity.setScheduleJson(writeJson(schedule));
+        entity.setScheduleType(schedule == null ? null : limit(schedule.scheduleType(), 32));
+        entity.setRunAt(schedule == null ? null : limit(schedule.runAt(), 64));
+        entity.setNextRunAt(schedule == null ? null : limit(schedule.effectiveRunAt(), 64));
+        entity.setLastRunAt(schedule == null ? null : limit(schedule.lastRunAt(), 64));
+        entity.setTriggerCount(schedule == null ? 0 : schedule.triggerCount());
         entity.setArgsJson(writeJson(action.args()));
         entity.setPriority(limit(action.priority(), 32));
         entity.setRiskLevel(limit(action.riskLevel(), 32));
@@ -178,7 +189,7 @@ public class TaskPlanRepository {
                 entity.getTitle(),
                 entity.getContent(),
                 readJson(entity.getTargetJson(), TaskTarget.class, new TaskTarget("unknown", null, null)),
-                readJson(entity.getScheduleJson(), TaskSchedule.class, new TaskSchedule("none", null, null, null, "Asia/Shanghai", null, null, 0)),
+                readSchedule(entity),
                 readMap(entity.getArgsJson()),
                 entity.getPriority(),
                 entity.getRiskLevel(),
@@ -188,6 +199,23 @@ public class TaskPlanRepository {
                 entity.getAnalysisNote(),
                 TaskStatus.valueOf(entity.getStatus()),
                 entity.getExecutionNote()
+        );
+    }
+
+    private TaskSchedule readSchedule(TaskActionEntity entity) {
+        TaskSchedule schedule = readJson(entity.getScheduleJson(), TaskSchedule.class, null);
+        if (schedule != null) {
+            return schedule;
+        }
+        return new TaskSchedule(
+                entity.getScheduleType(),
+                null,
+                entity.getRunAt(),
+                null,
+                "Asia/Shanghai",
+                entity.getNextRunAt(),
+                entity.getLastRunAt(),
+                entity.getTriggerCount()
         );
     }
 
