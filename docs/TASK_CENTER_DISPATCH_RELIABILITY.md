@@ -21,9 +21,11 @@ lastRunAt
 triggerCount
 lockedBy
 lockedAtEpochMs
+executionAttempt
+maxRetryCount
 ```
 
-`TaskAction.scheduleJson` 仍然保留，用于兼容完整调度对象；独立列用于调度查询、锁抢占和后续索引优化。
+`TaskAction.scheduleJson` 仍然保留，用于兼容完整调度对象；独立列用于调度查询、锁抢占、重试治理和后续索引优化。
 
 ## 2. 当前实现
 
@@ -40,11 +42,12 @@ public List<TaskPlan> findDueScheduledPlans(OffsetDateTime now, int limit)
 ```text
 1. 从 ai_task_action 查询 status = SCHEDULED 的 action。
 2. 要求 lockedBy 为空，或者 lockedAtEpochMs 已超时。
-3. 要求 nextRunAtEpochMs 不为空。
-4. 要求 nextRunAtEpochMs <= now.toInstant().toEpochMilli()。
-5. 按 nextRunAtEpochMs 升序排序。
-6. 使用 bounded limit 限制批次数量。
-7. 再根据 planId 回查完整 TaskPlan。
+3. 要求 executionAttempt < maxRetryCount，或者重试字段为空。
+4. 要求 nextRunAtEpochMs 不为空。
+5. 要求 nextRunAtEpochMs <= now.toInstant().toEpochMilli()。
+6. 按 nextRunAtEpochMs 升序排序。
+7. 使用 bounded limit 限制批次数量。
+8. 再根据 planId 回查完整 TaskPlan。
 ```
 
 为了兼容历史数据，当前保留一段兜底查询：
@@ -105,6 +108,7 @@ public boolean tryLockAction(String actionId, String lockedBy, OffsetDateTime no
 actionId 匹配
 status = SCHEDULED
 lockedBy 为空，或者 lockedAtEpochMs 已超过锁超时时间
+executionAttempt < maxRetryCount，或者重试字段为空
 ```
 
 当前锁超时时间：
@@ -120,6 +124,25 @@ public void releaseActionLock(String actionId, String lockedBy)
 ```
 
 释放时会校验 `lockedBy`，避免实例 A 释放实例 B 的锁。
+
+### 2.4 重试计数
+
+当前默认最大重试次数：
+
+```java
+private static final int DEFAULT_MAX_RETRY_COUNT = 3;
+```
+
+保存 `TaskPlan` 时会先读取旧 action：
+
+```text
+1. action 第一次保存时，maxRetryCount 默认 3，executionAttempt 默认 0。
+2. action 从非 FAILED 变成 FAILED 时，executionAttempt + 1。
+3. action 变成 EXECUTED 时，executionAttempt 重置为 0。
+4. action 保持 FAILED 时，不重复累加。
+```
+
+调度查询和抢锁都会排除达到最大重试次数的 action。
 
 ## 3. 已完成优化
 
@@ -176,9 +199,9 @@ private Long nextRunAtEpochMs;
 
 `nextRunAt` 字符串字段仍保留索引，用于短期兼容旧数据兜底查询。
 
-### 3.4 同步调度字段
+### 3.4 同步调度与治理字段
 
-保存 `TaskActionEntity` 时会从 `TaskSchedule` 同步：
+保存 `TaskActionEntity` 时会从 `TaskSchedule` 和旧 action 同步：
 
 ```text
 scheduleType      = schedule.scheduleType
@@ -189,6 +212,8 @@ lastRunAt         = schedule.lastRunAt
 triggerCount      = schedule.triggerCount
 lockedBy          = null
 lockedAtEpochMs   = null
+executionAttempt  = 根据旧状态和新状态计算
+maxRetryCount     = 旧值或默认 3
 ```
 
 `nextRunAt` 统一使用 `schedule.effectiveRunAt()`，即优先取 `nextRunAt`，没有时回退 `runAt`。
@@ -198,11 +223,11 @@ lockedAtEpochMs   = null
 当前版本仍存在以下限制：
 
 ```text
-1. 没有 executionAttempt / maxRetryCount。
-2. 没有 idempotencyKey。
-3. 还没有 status + nextRunAtEpochMs + lockedBy 的组合索引。
-4. 历史数据如果没有 nextRunAtEpochMs，仍依赖 nextRunAt 字符串兜底。
-5. 当前 save(plan) 会重建 action 行，锁字段会随保存被清空；现阶段可接受，但后续应改成 action 级别更新。
+1. 没有 idempotencyKey。
+2. 还没有 status + nextRunAtEpochMs + lockedBy 的组合索引。
+3. 历史数据如果没有 nextRunAtEpochMs，仍依赖 nextRunAt 字符串兜底。
+4. 当前 save(plan) 会重建 action 行；虽然已保留 executionAttempt / maxRetryCount，但后续仍应改成 action 级别更新。
+5. executionAttempt 当前只在状态变为 FAILED 时累加；如果未来做“FAILED 自动重新调度”，需要进一步扩展退避策略。
 ```
 
 ## 5. 后续推荐演进
@@ -254,6 +279,19 @@ idempotencyKey = planId + actionId + triggerCount
 
 外部执行器，例如消息、邮件、HTTP webhook，应基于幂等键避免重复发送。
 
+### 5.5 增加失败退避
+
+后续如果允许失败任务自动重新调度，建议增加：
+
+```text
+nextRetryAtEpochMs
+retryBackoffSeconds
+lastErrorCode
+lastErrorMessage
+```
+
+避免失败任务高频重复执行。
+
 ## 6. 验收建议
 
 本阶段本地验证：
@@ -265,18 +303,20 @@ idempotencyKey = planId + actionId + triggerCount
 4. 数据库中存在大量 EXECUTED / CANCELLED plan 时，调度扫描只查询 SCHEDULED 且 nextRunAtEpochMs 已到期的 action 对应计划。
 5. 手动设置某个 action 的 lockedBy，确认未超时前不会被扫描或执行。
 6. 手动设置 lockedAtEpochMs 为 5 分钟以前，确认可以被重新抢锁执行。
+7. 模拟 action 执行失败，确认 executionAttempt 增加。
+8. 将 executionAttempt 设置为 maxRetryCount，确认不再被调度扫描或抢锁。
 ```
 
 ## 7. 当前结论
 
-本阶段完成的是调度可靠性的第四步：
+本阶段完成的是调度可靠性的第五步：
 
 ```text
-从到期查询，升级为到期查询 + action 抢锁执行。
+从 action 抢锁执行，升级为 action 抢锁 + 最大重试次数限制。
 ```
 
 真正的生产级调度还需要继续完成：
 
 ```text
-历史数据回填、组合索引、action 级别保存、重试次数、幂等键、超时恢复。
+历史数据回填、组合索引、action 级别保存、幂等键、失败退避、超时恢复。
 ```
