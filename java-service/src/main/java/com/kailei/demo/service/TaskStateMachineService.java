@@ -47,11 +47,17 @@ public class TaskStateMachineService {
         if (actions.stream().allMatch(action -> action.status() == TaskStatus.CANCELLED)) {
             return TaskStatus.CANCELLED;
         }
+        if (actions.stream().anyMatch(action -> action.status() == TaskStatus.NEEDS_MANUAL_REVIEW)) {
+            return TaskStatus.NEEDS_MANUAL_REVIEW;
+        }
         if (actions.stream().anyMatch(action -> action.status() == TaskStatus.SCHEDULED)) {
             return TaskStatus.SCHEDULED;
         }
         if (actions.stream().anyMatch(action -> action.status() == TaskStatus.FAILED)) {
             return TaskStatus.FAILED;
+        }
+        if (actions.stream().anyMatch(action -> action.status() == TaskStatus.FAILED_FINAL)) {
+            return TaskStatus.FAILED_FINAL;
         }
         if (actions.stream().allMatch(action -> action.status() == TaskStatus.EXECUTED)) {
             return TaskStatus.EXECUTED;
