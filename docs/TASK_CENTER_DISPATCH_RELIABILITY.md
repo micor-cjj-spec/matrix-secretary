@@ -23,9 +23,10 @@ lockedBy
 lockedAtEpochMs
 executionAttempt
 maxRetryCount
+idempotencyKey
 ```
 
-`TaskAction.scheduleJson` 仍然保留，用于兼容完整调度对象；独立列用于调度查询、锁抢占、重试治理和后续索引优化。
+`TaskAction.scheduleJson` 仍然保留，用于兼容完整调度对象；独立列用于调度查询、锁抢占、重试治理、幂等治理和后续索引优化。
 
 ## 2. 当前实现
 
@@ -144,6 +145,32 @@ private static final int DEFAULT_MAX_RETRY_COUNT = 3;
 
 调度查询和抢锁都会排除达到最大重试次数的 action。
 
+### 2.5 幂等键
+
+`TaskActionEntity` 持久化：
+
+```java
+private String idempotencyKey;
+```
+
+当前生成规则：
+
+```text
+1. 如果旧 action 已存在 idempotencyKey，沿用旧值。
+2. 如果 action.args.idempotencyKey 已存在，优先使用请求传入值。
+3. 否则使用 planId + actionId + triggerCount 生成。
+```
+
+保存 action 时，会把 `idempotencyKey` 同步写入 `args.idempotencyKey`。读取 action 时，也会把实体字段中的 `idempotencyKey` 回填到 `TaskAction.args`。
+
+当前阶段的含义：
+
+```text
+任务中心已经为执行器提供稳定幂等键。
+```
+
+后续消息、邮件、Webhook 等执行器需要基于该 key 落地“已执行记录”或外部请求去重，才能真正做到端到端防重复发送。
+
 ## 3. 已完成优化
 
 ### 3.1 不再全量扫描 TaskPlan
@@ -197,11 +224,13 @@ private Long nextRunAtEpochMs;
 
 `TaskActionEntity.lockedBy` 和 `lockedAtEpochMs` 已增加索引，用于过滤未加锁或锁超时的 action。
 
+`TaskActionEntity.idempotencyKey` 已增加索引，用于后续执行器按幂等键查询执行记录。
+
 `nextRunAt` 字符串字段仍保留索引，用于短期兼容旧数据兜底查询。
 
 ### 3.4 同步调度与治理字段
 
-保存 `TaskActionEntity` 时会从 `TaskSchedule` 和旧 action 同步：
+保存 `TaskActionEntity` 时会从 `TaskSchedule`、旧 action 和 args 同步：
 
 ```text
 scheduleType      = schedule.scheduleType
@@ -214,6 +243,7 @@ lockedBy          = null
 lockedAtEpochMs   = null
 executionAttempt  = 根据旧状态和新状态计算
 maxRetryCount     = 旧值或默认 3
+idempotencyKey    = 旧值 / args.idempotencyKey / planId:actionId:triggerCount
 ```
 
 `nextRunAt` 统一使用 `schedule.effectiveRunAt()`，即优先取 `nextRunAt`，没有时回退 `runAt`。
@@ -223,11 +253,11 @@ maxRetryCount     = 旧值或默认 3
 当前版本仍存在以下限制：
 
 ```text
-1. 没有 idempotencyKey。
-2. 还没有 status + nextRunAtEpochMs + lockedBy 的组合索引。
-3. 历史数据如果没有 nextRunAtEpochMs，仍依赖 nextRunAt 字符串兜底。
-4. 当前 save(plan) 会重建 action 行；虽然已保留 executionAttempt / maxRetryCount，但后续仍应改成 action 级别更新。
-5. executionAttempt 当前只在状态变为 FAILED 时累加；如果未来做“FAILED 自动重新调度”，需要进一步扩展退避策略。
+1. 还没有 status + nextRunAtEpochMs + lockedBy 的组合索引。
+2. 历史数据如果没有 nextRunAtEpochMs，仍依赖 nextRunAt 字符串兜底。
+3. 当前 save(plan) 会重建 action 行；虽然已保留 executionAttempt / maxRetryCount / idempotencyKey，但后续仍应改成 action 级别更新。
+4. executionAttempt 当前只在状态变为 FAILED 时累加；如果未来做“FAILED 自动重新调度”，需要进一步扩展退避策略。
+5. idempotencyKey 目前只是任务中心生成并下发，执行器尚未基于它建立执行记录表。
 ```
 
 ## 5. 后续推荐演进
@@ -269,15 +299,25 @@ idx_plan_id_status(plan_id, status)
 4. 避免重建 action 行影响锁字段和执行统计字段。
 ```
 
-### 5.4 增加幂等键
+### 5.4 执行器落地幂等
 
-后续每次执行 action 应生成或持久化：
+后续建议新增执行记录表，例如：
 
 ```text
-idempotencyKey = planId + actionId + triggerCount
+ai_task_action_execution
+  - id
+  - plan_id
+  - action_id
+  - idempotency_key
+  - skill_name
+  - status
+  - request_hash
+  - response_payload
+  - created_at
+  - updated_at
 ```
 
-外部执行器，例如消息、邮件、HTTP webhook，应基于幂等键避免重复发送。
+执行器执行前先按 `idempotencyKey` 查询是否已成功执行，已成功则直接返回上次结果，未执行才真正调用外部系统。
 
 ### 5.5 增加失败退避
 
@@ -305,18 +345,19 @@ lastErrorMessage
 6. 手动设置 lockedAtEpochMs 为 5 分钟以前，确认可以被重新抢锁执行。
 7. 模拟 action 执行失败，确认 executionAttempt 增加。
 8. 将 executionAttempt 设置为 maxRetryCount，确认不再被调度扫描或抢锁。
+9. 查询 action 返回结果，确认 args.idempotencyKey 存在。
 ```
 
 ## 7. 当前结论
 
-本阶段完成的是调度可靠性的第五步：
+本阶段完成的是调度可靠性的第六步：
 
 ```text
-从 action 抢锁执行，升级为 action 抢锁 + 最大重试次数限制。
+从最大重试次数限制，升级为任务中心生成并持久化 action 幂等键。
 ```
 
 真正的生产级调度还需要继续完成：
 
 ```text
-历史数据回填、组合索引、action 级别保存、幂等键、失败退避、超时恢复。
+历史数据回填、组合索引、action 级别保存、执行器幂等记录表、失败退避、超时恢复。
 ```
