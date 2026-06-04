@@ -7,3 +7,4 @@ node_modules/
 dist/
 target/
 logs/
+java-service/src/main/resources/application-local.yml
