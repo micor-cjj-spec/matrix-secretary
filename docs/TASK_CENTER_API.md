@@ -21,10 +21,10 @@
 平台化后的核心服务：
 
 ```text
-TaskPreviewService   -> preview
-TaskCommandService   -> edit / confirm / cancel / retry
-TaskQueryService     -> get / list / session query
-TaskDispatchService  -> due task dispatch
+TaskPreviewService      -> preview
+TaskCommandService      -> edit / confirm / cancel / retry / manual-resolve / reopen-final-failure
+TaskQueryService        -> get / list / session query
+TaskDispatchService     -> due task dispatch
 TaskStateMachineService -> 状态规则
 ```
 
@@ -39,6 +39,8 @@ TaskStateMachineService -> 状态规则
 | 确认计划 | `POST /api/ai-task/{planId}/confirm` | `POST /api/task-center/plans/{planId}/confirm` |
 | 取消计划 | `POST /api/ai-task/{planId}/cancel` | `POST /api/task-center/plans/{planId}/cancel` |
 | 重试动作 | `POST /api/ai-task/{planId}/actions/{actionId}/retry` | `POST /api/task-center/plans/{planId}/actions/{actionId}/retry` |
+| 人工处理动作 | `POST /api/ai-task/{planId}/actions/{actionId}/manual-resolve` | `POST /api/task-center/plans/{planId}/actions/{actionId}/manual-resolve` |
+| 重新打开最终失败 | `POST /api/ai-task/{planId}/actions/{actionId}/reopen-final-failure` | `POST /api/task-center/plans/{planId}/actions/{actionId}/reopen-final-failure` |
 | 查询计划日志 | `GET /api/ai-task/{planId}/logs` | `GET /api/task-center/plans/{planId}/logs` |
 | 查询动作日志 | `GET /api/ai-task/{planId}/actions/{actionId}/logs` | `GET /api/task-center/plans/{planId}/actions/{actionId}/logs` |
 | 查询会话 | `GET /api/ai-task/sessions/{sessionId}` | `GET /api/task-center/sessions/{sessionId}` |
@@ -187,9 +189,77 @@ Content-Type: application/json
 1. 只有 FAILED action 允许重试。
 2. 重试会调用 TaskExecutionService.executeNow。
 3. 重试结束后会重新计算 TaskPlan 状态。
+4. FAILED_FINAL 不允许普通 retry，必须走 reopen-final-failure。
 ```
 
-## 9. 日志查询
+## 9. 人工处理动作
+
+```http
+POST /api/task-center/plans/{planId}/actions/{actionId}/manual-resolve
+Content-Type: application/json
+```
+
+```json
+{
+  "operatorUserId": "demo-user",
+  "title": "修正后的动作标题",
+  "content": "修正后的动作内容",
+  "target": {
+    "targetType": "user",
+    "name": "张三",
+    "address": null
+  },
+  "schedule": null,
+  "args": {
+    "platform": "feishu"
+  },
+  "priority": "P1",
+  "requiresConfirmation": false,
+  "executeNow": true,
+  "note": "补齐缺失参数后立即执行"
+}
+```
+
+人工处理规则：
+
+```text
+1. 只有 NEEDS_MANUAL_REVIEW action 允许人工处理。
+2. 可在请求中修复 title / content / target / schedule / args / priority / requiresConfirmation。
+3. executeNow=true 时会立即调用 TaskExecutionService.executeNow。
+4. executeNow=false 且 schedule 有效时会重新进入 SCHEDULED。
+5. 处理过程会写 TaskExecutionLog，并重新计算 TaskPlan 状态。
+```
+
+## 10. 重新打开最终失败
+
+```http
+POST /api/task-center/plans/{planId}/actions/{actionId}/reopen-final-failure
+Content-Type: application/json
+```
+
+```json
+{
+  "operatorUserId": "admin-user",
+  "args": {
+    "url": "http://127.0.0.1:10002/api/mock/skill-endpoint"
+  },
+  "executeNow": false,
+  "note": "管理员修复 Skill 配置后重新进入调度队列"
+}
+```
+
+重新打开规则：
+
+```text
+1. 只有 FAILED_FINAL action 允许重新打开。
+2. 典型用途是管理员修复配置后，让不可重试失败重新进入可执行链路。
+3. 可在请求中修复 title / content / target / schedule / args / priority / requiresConfirmation。
+4. executeNow=true 时会立即执行；否则如果 schedule 有效，会重新进入 SCHEDULED。
+5. 非 FAILED_FINAL action 调用该接口应返回 BAD_REQUEST。
+6. 操作会写 TaskExecutionLog，并重新计算 TaskPlan 状态。
+```
+
+## 11. 日志查询
 
 ```http
 GET /api/task-center/plans/{planId}/logs?userId=demo-user
@@ -201,7 +271,7 @@ GET /api/task-center/plans/{planId}/actions/{actionId}/logs?userId=demo-user
 
 日志查询前会先通过 `TaskQueryService.get(planId, userId)` 校验访问权限。
 
-## 10. 会话查询
+## 12. 会话查询
 
 ```http
 GET /api/task-center/sessions/{sessionId}?userId=demo-user
@@ -211,19 +281,33 @@ GET /api/task-center/sessions/{sessionId}?userId=demo-user
 GET /api/task-center/sessions/{sessionId}/plans?userId=demo-user
 ```
 
-## 11. 状态规则摘要
+## 13. 状态规则摘要
 
 ```text
-WAITING_CONFIRM  -> 可编辑 / 可确认 / 可取消
-SCHEDULED        -> 等待调度触发
-EXECUTED         -> 已执行，不能整体取消
-FAILED           -> 可重试 action
-CANCELLED        -> 已取消
+WAITING_CONFIRM      -> 可编辑 / 可确认 / 可取消
+CONFIRMED            -> 已确认，等待执行服务处理
+SCHEDULED            -> 等待调度触发
+EXECUTED             -> 已执行，不能整体取消
+FAILED               -> 可普通 retry
+NEEDS_MANUAL_REVIEW  -> 参数或上下文需要人工修复，只能 manual-resolve
+FAILED_FINAL         -> 配置类或不可重试失败，只能 reopen-final-failure
+CANCELLED            -> 已取消
 ```
 
 计划状态由 `TaskStateMachineService.resolvePlanStatus()` 根据 action 状态统一计算。
 
-## 12. 本地验证建议
+`ConfirmTaskResponse.executionSummary` 当前包含：
+
+```text
+executed
+scheduled
+failed
+failedFinal
+manualReview
+cancelled
+```
+
+## 14. 本地验证建议
 
 启动 Java 服务后，可在 Swagger 中查看新接口：
 
@@ -243,5 +327,18 @@ http://127.0.0.1:10002/v3/api-docs
 1. POST /api/task-center/plans/preview
 2. PATCH /api/task-center/plans/{planId}/actions/{actionId}
 3. POST /api/task-center/plans/{planId}/confirm
-4. GET /api/task-center/plans/{planId}/logs
+4. POST /api/task-center/plans/{planId}/actions/{actionId}/retry
+5. POST /api/task-center/plans/{planId}/actions/{actionId}/manual-resolve
+6. POST /api/task-center/plans/{planId}/actions/{actionId}/reopen-final-failure
+7. GET  /api/task-center/plans/{planId}/logs
+8. GET  /api/task-center/plans/{planId}/actions/{actionId}/logs
+```
+
+异常链路建议验证：
+
+```text
+1. 非 FAILED action 调 retry，应返回 BAD_REQUEST。
+2. 非 NEEDS_MANUAL_REVIEW action 调 manual-resolve，应返回 BAD_REQUEST。
+3. 非 FAILED_FINAL action 调 reopen-final-failure，应返回 BAD_REQUEST。
+4. operatorUserId 与 TaskPlan.userId 不一致，应返回 BAD_REQUEST。
 ```
