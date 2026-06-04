@@ -28,6 +28,14 @@ idempotencyKey
 
 `TaskAction.scheduleJson` 仍然保留，用于兼容完整调度对象；独立列用于调度查询、锁抢占、重试治理、幂等治理和后续索引优化。
 
+同时已新增执行记录表：
+
+```text
+ai_task_action_execution
+```
+
+用于记录按 `idempotencyKey` 执行过的 action，避免同一个幂等键重复调用外部执行器。
+
 ## 2. 当前实现
 
 ### 2.1 Repository 查询
@@ -163,13 +171,26 @@ private String idempotencyKey;
 
 保存 action 时，会把 `idempotencyKey` 同步写入 `args.idempotencyKey`。读取 action 时，也会把实体字段中的 `idempotencyKey` 回填到 `TaskAction.args`。
 
-当前阶段的含义：
+### 2.6 执行记录表
 
-```text
-任务中心已经为执行器提供稳定幂等键。
+`TaskActionExecutionRepository` 提供：
+
+```java
+findExecutedByIdempotencyKey(idempotencyKey)
+record(planId, userId, skill, before, after, operatorUserId)
 ```
 
-后续消息、邮件、Webhook 等执行器需要基于该 key 落地“已执行记录”或外部请求去重，才能真正做到端到端防重复发送。
+`TaskExecutionService.executeNow()` 当前执行规则：
+
+```text
+1. 从 TaskAction.args 读取 idempotencyKey。
+2. 如果 ai_task_action_execution 中存在同一 idempotencyKey 且状态为 EXECUTED 的记录，则直接返回 EXECUTED，不调用 GenericSkillExecutor。
+3. 如果没有命中，则调用 GenericSkillExecutor 真正执行。
+4. 执行完成后写入 ai_task_action_execution。
+5. 继续写 TaskExecutionLog。
+```
+
+这一步已经把幂等键从“只生成”推进到“执行前查重 + 执行后记录”。
 
 ## 3. 已完成优化
 
@@ -226,6 +247,8 @@ private Long nextRunAtEpochMs;
 
 `TaskActionEntity.idempotencyKey` 已增加索引，用于后续执行器按幂等键查询执行记录。
 
+`TaskActionExecutionEntity.idempotencyKey` 已增加索引，用于执行前查重。
+
 `nextRunAt` 字符串字段仍保留索引，用于短期兼容旧数据兜底查询。
 
 ### 3.4 同步调度与治理字段
@@ -257,7 +280,7 @@ idempotencyKey    = 旧值 / args.idempotencyKey / planId:actionId:triggerCount
 2. 历史数据如果没有 nextRunAtEpochMs，仍依赖 nextRunAt 字符串兜底。
 3. 当前 save(plan) 会重建 action 行；虽然已保留 executionAttempt / maxRetryCount / idempotencyKey，但后续仍应改成 action 级别更新。
 4. executionAttempt 当前只在状态变为 FAILED 时累加；如果未来做“FAILED 自动重新调度”，需要进一步扩展退避策略。
-5. idempotencyKey 目前只是任务中心生成并下发，执行器尚未基于它建立执行记录表。
+5. 执行记录当前按 idempotencyKey 查询成功记录，但还没有数据库唯一约束；极端并发下仍建议后续增加唯一索引或数据库原子插入。
 ```
 
 ## 5. 后续推荐演进
@@ -276,7 +299,7 @@ where next_run_at_epoch_ms is null
 
 也可以用 Java migration runner 读取 `nextRunAt` 后调用 `OffsetDateTime.parse(...).toInstant().toEpochMilli()` 回填。
 
-### 5.2 增加组合索引
+### 5.2 增加组合索引与唯一约束
 
 当历史数据回填完成后，推荐组合索引：
 
@@ -284,6 +307,12 @@ where next_run_at_epoch_ms is null
 idx_status_next_run_epoch(status, next_run_at_epoch_ms)
 idx_status_lock_next_run(status, locked_by, locked_at_epoch_ms, next_run_at_epoch_ms)
 idx_plan_id_status(plan_id, status)
+```
+
+执行记录表推荐唯一约束：
+
+```text
+uk_idempotency_key(idempotency_key)
 ```
 
 当前阶段先使用单列索引，避免一次性改动过大。
@@ -299,27 +328,7 @@ idx_plan_id_status(plan_id, status)
 4. 避免重建 action 行影响锁字段和执行统计字段。
 ```
 
-### 5.4 执行器落地幂等
-
-后续建议新增执行记录表，例如：
-
-```text
-ai_task_action_execution
-  - id
-  - plan_id
-  - action_id
-  - idempotency_key
-  - skill_name
-  - status
-  - request_hash
-  - response_payload
-  - created_at
-  - updated_at
-```
-
-执行器执行前先按 `idempotencyKey` 查询是否已成功执行，已成功则直接返回上次结果，未执行才真正调用外部系统。
-
-### 5.5 增加失败退避
+### 5.4 增加失败退避
 
 后续如果允许失败任务自动重新调度，建议增加：
 
@@ -346,18 +355,19 @@ lastErrorMessage
 7. 模拟 action 执行失败，确认 executionAttempt 增加。
 8. 将 executionAttempt 设置为 maxRetryCount，确认不再被调度扫描或抢锁。
 9. 查询 action 返回结果，确认 args.idempotencyKey 存在。
+10. 重复执行同一个 idempotencyKey 的 action，确认第二次不会调用真实执行器。
 ```
 
 ## 7. 当前结论
 
-本阶段完成的是调度可靠性的第六步：
+本阶段完成的是调度可靠性的第七步：
 
 ```text
-从最大重试次数限制，升级为任务中心生成并持久化 action 幂等键。
+从任务中心生成幂等键，升级为执行前查重 + 执行后记录。
 ```
 
 真正的生产级调度还需要继续完成：
 
 ```text
-历史数据回填、组合索引、action 级别保存、执行器幂等记录表、失败退避、超时恢复。
+历史数据回填、组合索引、唯一约束、action 级别保存、失败退避、超时恢复。
 ```
