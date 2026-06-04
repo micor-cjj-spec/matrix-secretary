@@ -47,7 +47,7 @@ public class ChannelTaskFacade {
 
         Optional<String> cancelPlanId = matchPlanId(CANCEL_PATTERN, text);
         if (cancelPlanId.isPresent()) {
-            ConfirmTaskResponse response = aiTaskService.cancel(cancelPlanId.get(), incoming.secretaryUserId(), "渠道用户取消");
+            ConfirmTaskResponse response = aiTaskService.cancel(confirmPlanId.orElse(cancelPlanId.get()), incoming.secretaryUserId(), "渠道用户取消");
             adapter.sendText(reply(incoming, "已取消任务计划 " + response.planId() + "，当前状态：" + response.status()));
             return;
         }
@@ -59,6 +59,11 @@ public class ChannelTaskFacade {
                 incoming.secretarySessionId()
         ));
         plan = attachChannelContext(plan, incoming);
+        if (canAutoConfirmReminder(plan)) {
+            ConfirmTaskResponse response = aiTaskService.confirm(plan.planId(), plan.userId());
+            adapter.sendText(reply(incoming, "已安排提醒：" + reminderSummary(response.plan()) + "\nplanId: " + response.planId()));
+            return;
+        }
         adapter.sendText(reply(incoming, renderPreview(plan)));
     }
 
@@ -74,10 +79,48 @@ public class ChannelTaskFacade {
             current = aiTaskService.editAction(
                     current.planId(),
                     action.actionId(),
-                    new EditTaskActionRequest(incoming.secretaryUserId(), null, null, null, null, args, null, null)
+                    new EditTaskActionRequest(incoming.secretaryUserId(), null, normalizeReminderContent(action), null, null, args, null, false)
             );
         }
         return current;
+    }
+
+    private boolean canAutoConfirmReminder(TaskPlan plan) {
+        if (plan.tasks().isEmpty()) {
+            return false;
+        }
+        return plan.tasks().stream().allMatch(action ->
+                "reminder".equalsIgnoreCase(action.actionType())
+                        && action.schedule() != null
+                        && action.schedule().isScheduled()
+                        && !"HIGH".equalsIgnoreCase(action.riskLevel())
+        );
+    }
+
+    private String reminderSummary(TaskPlan plan) {
+        return plan.tasks().stream()
+                .findFirst()
+                .map(action -> {
+                    String content = action.content() == null || action.content().isBlank() ? "提醒事项" : action.content();
+                    String time = action.schedule() == null ? null : action.schedule().effectiveRunAt();
+                    return time == null || time.isBlank() ? content : content + "（" + time + "）";
+                })
+                .orElse("提醒事项");
+    }
+
+    private String normalizeReminderContent(TaskAction action) {
+        if (!"reminder".equalsIgnoreCase(action.actionType())) {
+            return null;
+        }
+        String content = action.content();
+        if (content == null || content.isBlank()) {
+            return "该处理提醒事项了";
+        }
+        String normalized = content.trim();
+        if ("喝水".equals(normalized) || normalized.startsWith("喝水")) {
+            return "该喝水了";
+        }
+        return normalized;
     }
 
     private Optional<String> matchPlanId(Pattern pattern, String text) {
