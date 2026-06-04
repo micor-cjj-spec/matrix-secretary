@@ -74,6 +74,15 @@ public class TaskActionEntity {
     @ColumnComment("触发次数")
     private Integer triggerCount;
 
+    @Index
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 64)
+    @ColumnComment("调度锁持有者")
+    private String lockedBy;
+
+    @Index
+    @ColumnComment("调度锁时间epoch毫秒")
+    private Long lockedAtEpochMs;
+
     @ColumnType(MysqlTypeConstant.JSON)
     @ColumnComment("技能参数JSON")
     private String argsJson;
@@ -140,6 +149,10 @@ public class TaskActionEntity {
     public void setLastRunAt(String lastRunAt) { this.lastRunAt = lastRunAt; }
     public Integer getTriggerCount() { return triggerCount; }
     public void setTriggerCount(Integer triggerCount) { this.triggerCount = triggerCount; }
+    public String getLockedBy() { return lockedBy; }
+    public void setLockedBy(String lockedBy) { this.lockedBy = lockedBy; }
+    public Long getLockedAtEpochMs() { return lockedAtEpochMs; }
+    public void setLockedAtEpochMs(Long lockedAtEpochMs) { this.lockedAtEpochMs = lockedAtEpochMs; }
     public String getArgsJson() { return argsJson; }
     public void setArgsJson(String argsJson) { this.argsJson = argsJson; }
     public String getPriority() { return priority; }
