@@ -3,7 +3,6 @@ package com.kailei.demo.service;
 import com.kailei.demo.client.PythonSemanticClient;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
-import com.kailei.demo.model.ExecutionSummary;
 import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskAction;
@@ -11,14 +10,12 @@ import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.model.TaskSchedule;
 import com.kailei.demo.model.TaskStatus;
 import com.kailei.demo.repository.AiSessionRepository;
-import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.repository.TaskPlanRepository;
 import com.kailei.demo.skill.SkillCatalog;
 import com.kailei.demo.skill.SkillDefinition;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.IntStream;
@@ -28,35 +25,29 @@ public class AiTaskService {
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
-    private final TaskExecutionService executionService;
     private final SkillCatalog skillCatalog;
     private final CronScheduleService cronScheduleService;
-    private final TaskExecutionLogRepository executionLogRepository;
     private final AiSessionRepository sessionRepository;
-    private final TaskStateMachineService stateMachineService;
     private final TaskQueryService taskQueryService;
     private final TaskDispatchService taskDispatchService;
+    private final TaskCommandService taskCommandService;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
-                         TaskExecutionService executionService,
                          SkillCatalog skillCatalog,
                          CronScheduleService cronScheduleService,
-                         TaskExecutionLogRepository executionLogRepository,
                          AiSessionRepository sessionRepository,
-                         TaskStateMachineService stateMachineService,
                          TaskQueryService taskQueryService,
-                         TaskDispatchService taskDispatchService) {
+                         TaskDispatchService taskDispatchService,
+                         TaskCommandService taskCommandService) {
         this.pythonClient = pythonClient;
         this.repository = repository;
-        this.executionService = executionService;
         this.skillCatalog = skillCatalog;
         this.cronScheduleService = cronScheduleService;
-        this.executionLogRepository = executionLogRepository;
         this.sessionRepository = sessionRepository;
-        this.stateMachineService = stateMachineService;
         this.taskQueryService = taskQueryService;
         this.taskDispatchService = taskDispatchService;
+        this.taskCommandService = taskCommandService;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
@@ -95,42 +86,7 @@ public class AiTaskService {
     }
 
     public TaskPlan editAction(String planId, String actionId, EditTaskActionRequest request) {
-        TaskPlan plan = get(planId);
-        String requestedOperator = request == null ? null : request.operatorUserId();
-        ensureOperatorCanAccess(plan, requestedOperator);
-        String effectiveOperator = effectiveOperator(requestedOperator, plan.userId());
-        stateMachineService.ensureCanEditPlan(plan);
-
-        List<TaskAction> nextActions = new ArrayList<>();
-        boolean matched = false;
-        for (TaskAction action : plan.tasks()) {
-            if (!action.actionId().equals(actionId)) {
-                nextActions.add(action);
-                continue;
-            }
-            matched = true;
-            stateMachineService.ensureCanEdit(plan, action);
-            TaskSchedule nextSchedule = request == null || request.schedule() == null
-                    ? null
-                    : cronScheduleService.ensureCronAndNextRun(request.schedule());
-            TaskAction edited = action.withEditableFields(
-                    request == null ? null : request.title(),
-                    request == null ? null : request.content(),
-                    request == null ? null : request.target(),
-                    nextSchedule,
-                    request == null ? null : request.args(),
-                    request == null ? null : request.priority(),
-                    request == null ? null : request.requiresConfirmation()
-            ).withStatus(TaskStatus.WAITING_CONFIRM, "用户已编辑任务参数，等待确认");
-            executionLogRepository.logStateChange(plan.planId(), action, edited, effectiveOperator);
-            nextActions.add(edited);
-        }
-        if (!matched) {
-            throw new IllegalArgumentException("任务动作不存在: " + actionId);
-        }
-        TaskPlan saved = repository.save(plan.withStatus(TaskStatus.WAITING_CONFIRM, nextActions));
-        sessionRepository.updateAfterPlanChange(saved);
-        return saved;
+        return taskCommandService.editAction(planId, actionId, request);
     }
 
     private TaskAction toTaskAction(String planId, PythonSemanticClient.PythonTaskAction item, int index) {
@@ -169,71 +125,15 @@ public class AiTaskService {
     }
 
     public ConfirmTaskResponse confirm(String planId, String operatorUserId) {
-        TaskPlan plan = get(planId);
-        ensureOperatorCanAccess(plan, operatorUserId);
-        String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
-        if (plan.status() != TaskStatus.WAITING_CONFIRM) {
-            return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
-        }
-
-        List<TaskAction> nextActions = plan.tasks().stream()
-                .map(action -> executionService.confirmAction(plan.planId(), plan.userId(), action, effectiveOperator))
-                .toList();
-
-        TaskPlan nextPlan = plan.withStatus(stateMachineService.resolvePlanStatus(nextActions), nextActions);
-        TaskPlan saved = repository.save(nextPlan);
-        sessionRepository.updateAfterPlanChange(saved);
-        return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
+        return taskCommandService.confirm(planId, operatorUserId);
     }
 
     public ConfirmTaskResponse cancel(String planId, String operatorUserId, String reason) {
-        TaskPlan plan = get(planId);
-        ensureOperatorCanAccess(plan, operatorUserId);
-        String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
-        if (plan.status() == TaskStatus.CANCELLED) {
-            return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
-        }
-        stateMachineService.ensureCanCancel(plan);
-
-        String cancelReason = reason == null || reason.isBlank() ? "用户主动取消" : reason;
-        List<TaskAction> nextActions = plan.tasks().stream()
-                .map(action -> {
-                    if (action.status() == TaskStatus.CANCELLED) {
-                        return action;
-                    }
-                    TaskAction next = action.withStatus(TaskStatus.CANCELLED, "任务已取消: " + cancelReason);
-                    executionLogRepository.logStateChange(plan.planId(), action, next, effectiveOperator);
-                    return next;
-                })
-                .toList();
-        TaskPlan nextPlan = plan.withStatus(TaskStatus.CANCELLED, nextActions);
-        TaskPlan saved = repository.save(nextPlan);
-        sessionRepository.updateAfterPlanChange(saved);
-        return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
+        return taskCommandService.cancel(planId, operatorUserId, reason);
     }
 
     public ConfirmTaskResponse retryAction(String planId, String actionId, String operatorUserId) {
-        TaskPlan plan = get(planId);
-        ensureOperatorCanAccess(plan, operatorUserId);
-        String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
-        List<TaskAction> nextActions = new ArrayList<>();
-        boolean matched = false;
-        for (TaskAction action : plan.tasks()) {
-            if (!action.actionId().equals(actionId)) {
-                nextActions.add(action);
-                continue;
-            }
-            matched = true;
-            stateMachineService.ensureCanRetry(plan, action);
-            nextActions.add(executionService.executeNow(plan.planId(), plan.userId(), action, effectiveOperator));
-        }
-        if (!matched) {
-            throw new IllegalArgumentException("任务动作不存在: " + actionId);
-        }
-        TaskPlan nextPlan = plan.withStatus(stateMachineService.resolvePlanStatus(nextActions), nextActions);
-        TaskPlan saved = repository.save(nextPlan);
-        sessionRepository.updateAfterPlanChange(saved);
-        return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
+        return taskCommandService.retryAction(planId, actionId, operatorUserId);
     }
 
     public TaskPlan get(String planId) {
@@ -262,27 +162,5 @@ public class AiTaskService {
 
     public void dispatchDueOnceTasks() {
         taskDispatchService.dispatchDueOnceTasks();
-    }
-
-    private void ensureOperatorCanAccess(TaskPlan plan, String operatorUserId) {
-        if (plan.userId() == null || plan.userId().isBlank()) {
-            return;
-        }
-        if (operatorUserId == null || operatorUserId.isBlank() || !plan.userId().equals(operatorUserId)) {
-            throw new IllegalArgumentException("任务计划不存在或无权操作: " + plan.planId());
-        }
-    }
-
-    private String effectiveOperator(String operatorUserId, String fallbackUserId) {
-        return operatorUserId == null || operatorUserId.isBlank()
-                ? fallbackUserId
-                : operatorUserId;
-    }
-
-    private ExecutionSummary summarize(List<TaskAction> actions) {
-        int executed = (int) actions.stream().filter(action -> action.status() == TaskStatus.EXECUTED).count();
-        int scheduled = (int) actions.stream().filter(action -> action.status() == TaskStatus.SCHEDULED).count();
-        int failed = (int) actions.stream().filter(action -> action.status() == TaskStatus.FAILED).count();
-        return new ExecutionSummary(executed, scheduled, failed);
     }
 }
