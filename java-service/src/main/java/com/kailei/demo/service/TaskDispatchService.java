@@ -16,6 +16,7 @@ import java.util.List;
 public class TaskDispatchService {
 
     private static final String SYSTEM_OPERATOR = "system-scheduler";
+    private static final int DEFAULT_DISPATCH_LIMIT = 100;
 
     private final TaskPlanRepository taskPlanRepository;
     private final TaskExecutionService executionService;
@@ -36,8 +37,12 @@ public class TaskDispatchService {
     }
 
     public void dispatchDueOnceTasks() {
+        dispatchDueOnceTasks(DEFAULT_DISPATCH_LIMIT);
+    }
+
+    public void dispatchDueOnceTasks(int limit) {
         OffsetDateTime now = OffsetDateTime.now();
-        taskPlanRepository.findAll().forEach(plan -> {
+        taskPlanRepository.findDueScheduledPlans(now, limit).forEach(plan -> {
             List<TaskAction> nextActions = plan.tasks().stream()
                     .map(action -> dispatchIfDue(plan, action, now))
                     .toList();
