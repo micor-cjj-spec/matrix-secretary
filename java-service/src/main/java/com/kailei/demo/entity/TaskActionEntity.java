@@ -49,6 +49,27 @@ public class TaskActionEntity {
     @ColumnComment("调度信息JSON")
     private String scheduleJson;
 
+    @Index
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 32)
+    @ColumnComment("调度类型")
+    private String scheduleType;
+
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 64)
+    @ColumnComment("一次性执行时间")
+    private String runAt;
+
+    @Index
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 64)
+    @ColumnComment("下一次执行时间")
+    private String nextRunAt;
+
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 64)
+    @ColumnComment("上一次执行时间")
+    private String lastRunAt;
+
+    @ColumnComment("触发次数")
+    private Integer triggerCount;
+
     @ColumnType(MysqlTypeConstant.JSON)
     @ColumnComment("技能参数JSON")
     private String argsJson;
@@ -103,6 +124,16 @@ public class TaskActionEntity {
     public void setTargetJson(String targetJson) { this.targetJson = targetJson; }
     public String getScheduleJson() { return scheduleJson; }
     public void setScheduleJson(String scheduleJson) { this.scheduleJson = scheduleJson; }
+    public String getScheduleType() { return scheduleType; }
+    public void setScheduleType(String scheduleType) { this.scheduleType = scheduleType; }
+    public String getRunAt() { return runAt; }
+    public void setRunAt(String runAt) { this.runAt = runAt; }
+    public String getNextRunAt() { return nextRunAt; }
+    public void setNextRunAt(String nextRunAt) { this.nextRunAt = nextRunAt; }
+    public String getLastRunAt() { return lastRunAt; }
+    public void setLastRunAt(String lastRunAt) { this.lastRunAt = lastRunAt; }
+    public Integer getTriggerCount() { return triggerCount; }
+    public void setTriggerCount(Integer triggerCount) { this.triggerCount = triggerCount; }
     public String getArgsJson() { return argsJson; }
     public void setArgsJson(String argsJson) { this.argsJson = argsJson; }
     public String getPriority() { return priority; }
