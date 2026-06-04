@@ -171,26 +171,49 @@ private String idempotencyKey;
 
 保存 action 时，会把 `idempotencyKey` 同步写入 `args.idempotencyKey`。读取 action 时，也会把实体字段中的 `idempotencyKey` 回填到 `TaskAction.args`。
 
-### 2.6 执行记录表
+### 2.6 执行记录表与原子占位
 
 `TaskActionExecutionRepository` 提供：
 
 ```java
+tryBeginExecution(planId, userId, skill, action, operatorUserId)
 findExecutedByIdempotencyKey(idempotencyKey)
 record(planId, userId, skill, before, after, operatorUserId)
+```
+
+当前执行记录状态：
+
+```text
+RUNNING
+EXECUTED
+FAILED
+```
+
+`tryBeginExecution` 当前规则：
+
+```text
+1. 从 TaskAction.args 读取 idempotencyKey。
+2. 如果没有 idempotencyKey，则直接放行执行。
+3. 如果已存在同 key 且状态为 EXECUTED，返回 EXECUTED，调用方跳过真实执行。
+4. 如果已存在同 key 且状态为 RUNNING，返回 RUNNING，调用方跳过本次重复触发。
+5. 如果不存在同 key，则使用 idempotencyKey 的 SHA-256 生成确定性执行记录 ID。
+6. 先插入 RUNNING 执行记录，插入成功才允许调用 GenericSkillExecutor。
+7. 如果并发插入发生主键冲突，则回查已有记录并按 EXECUTED / RUNNING 分支处理。
+8. 执行完成后 record(...) 将 RUNNING 更新为 EXECUTED 或 FAILED。
 ```
 
 `TaskExecutionService.executeNow()` 当前执行规则：
 
 ```text
-1. 从 TaskAction.args 读取 idempotencyKey。
-2. 如果 ai_task_action_execution 中存在同一 idempotencyKey 且状态为 EXECUTED 的记录，则直接返回 EXECUTED，不调用 GenericSkillExecutor。
-3. 如果没有命中，则调用 GenericSkillExecutor 真正执行。
-4. 执行完成后写入 ai_task_action_execution。
-5. 继续写 TaskExecutionLog。
+1. 获取 SkillDefinition。
+2. 调用 tryBeginExecution 抢占 idempotencyKey。
+3. ACQUIRED：调用 GenericSkillExecutor 真正执行，并记录结果。
+4. EXECUTED：直接返回 EXECUTED，不调用 GenericSkillExecutor。
+5. RUNNING：直接返回 SCHEDULED，不调用 GenericSkillExecutor。
+6. 继续写 TaskExecutionLog。
 ```
 
-这一步已经把幂等键从“只生成”推进到“执行前查重 + 执行后记录”。
+这一步已经把幂等从“执行前查询”推进到“执行前原子占位 + 执行后更新”。
 
 ## 3. 已完成优化
 
@@ -247,7 +270,7 @@ private Long nextRunAtEpochMs;
 
 `TaskActionEntity.idempotencyKey` 已增加索引，用于后续执行器按幂等键查询执行记录。
 
-`TaskActionExecutionEntity.idempotencyKey` 已增加索引，用于执行前查重。
+`TaskActionExecutionEntity.idempotencyKey` 已增加索引，用于执行前查重；执行记录 ID 由 `idempotencyKey` 的 SHA-256 派生，提供第一层并发占位保护。
 
 `nextRunAt` 字符串字段仍保留索引，用于短期兼容旧数据兜底查询。
 
@@ -280,7 +303,8 @@ idempotencyKey    = 旧值 / args.idempotencyKey / planId:actionId:triggerCount
 2. 历史数据如果没有 nextRunAtEpochMs，仍依赖 nextRunAt 字符串兜底。
 3. 当前 save(plan) 会重建 action 行；虽然已保留 executionAttempt / maxRetryCount / idempotencyKey，但后续仍应改成 action 级别更新。
 4. executionAttempt 当前只在状态变为 FAILED 时累加；如果未来做“FAILED 自动重新调度”，需要进一步扩展退避策略。
-5. 执行记录当前按 idempotencyKey 查询成功记录，但还没有数据库唯一约束；极端并发下仍建议后续增加唯一索引或数据库原子插入。
+5. 执行记录 ID 已经按 idempotencyKey 确定性生成，但 idempotencyKey 字段本身还没有数据库唯一约束。
+6. RUNNING 执行记录目前没有超时恢复逻辑，执行器进程异常退出时需要后续恢复任务处理。
 ```
 
 ## 5. 后续推荐演进
@@ -315,7 +339,7 @@ idx_plan_id_status(plan_id, status)
 uk_idempotency_key(idempotency_key)
 ```
 
-当前阶段先使用单列索引，避免一次性改动过大。
+当前阶段通过确定性执行记录 ID 先提供并发占位保护，后续仍建议增加唯一约束。
 
 ### 5.3 改为 action 级别保存
 
@@ -341,6 +365,16 @@ lastErrorMessage
 
 避免失败任务高频重复执行。
 
+### 5.5 增加 RUNNING 超时恢复
+
+后续需要增加恢复任务：
+
+```text
+1. 扫描 ai_task_action_execution 中长时间 RUNNING 的记录。
+2. 根据业务策略标记 FAILED 或重新放行。
+3. 结合 action lockedAtEpochMs 释放卡住的执行锁。
+```
+
 ## 6. 验收建议
 
 本阶段本地验证：
@@ -356,18 +390,19 @@ lastErrorMessage
 8. 将 executionAttempt 设置为 maxRetryCount，确认不再被调度扫描或抢锁。
 9. 查询 action 返回结果，确认 args.idempotencyKey 存在。
 10. 重复执行同一个 idempotencyKey 的 action，确认第二次不会调用真实执行器。
+11. 并发触发同一个 idempotencyKey，确认只有一个请求能插入 RUNNING 执行记录并进入真实执行。
 ```
 
 ## 7. 当前结论
 
-本阶段完成的是调度可靠性的第七步：
+本阶段完成的是调度可靠性的第八步：
 
 ```text
-从任务中心生成幂等键，升级为执行前查重 + 执行后记录。
+从执行前查重，升级为执行前原子占位 + 执行后记录。
 ```
 
 真正的生产级调度还需要继续完成：
 
 ```text
-历史数据回填、组合索引、唯一约束、action 级别保存、失败退避、超时恢复。
+历史数据回填、组合索引、唯一约束、action 级别保存、失败退避、RUNNING 超时恢复。
 ```
