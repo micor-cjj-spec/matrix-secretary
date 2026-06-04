@@ -5,7 +5,10 @@ import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.model.TaskSchedule;
 import com.kailei.demo.model.TaskStatus;
 import com.kailei.demo.repository.AiSessionRepository;
+import com.kailei.demo.repository.TaskActionExecutionRepository;
 import com.kailei.demo.repository.TaskPlanRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.lang.management.ManagementFactory;
@@ -17,22 +20,26 @@ import java.util.UUID;
 @Service
 public class TaskDispatchService {
 
+    private static final Logger log = LoggerFactory.getLogger(TaskDispatchService.class);
     private static final String SYSTEM_OPERATOR = "system-scheduler";
     private static final int DEFAULT_DISPATCH_LIMIT = 100;
     private final String schedulerInstanceId = buildSchedulerInstanceId();
 
     private final TaskPlanRepository taskPlanRepository;
+    private final TaskActionExecutionRepository actionExecutionRepository;
     private final TaskExecutionService executionService;
     private final CronScheduleService cronScheduleService;
     private final TaskStateMachineService stateMachineService;
     private final AiSessionRepository sessionRepository;
 
     public TaskDispatchService(TaskPlanRepository taskPlanRepository,
+                               TaskActionExecutionRepository actionExecutionRepository,
                                TaskExecutionService executionService,
                                CronScheduleService cronScheduleService,
                                TaskStateMachineService stateMachineService,
                                AiSessionRepository sessionRepository) {
         this.taskPlanRepository = taskPlanRepository;
+        this.actionExecutionRepository = actionExecutionRepository;
         this.executionService = executionService;
         this.cronScheduleService = cronScheduleService;
         this.stateMachineService = stateMachineService;
@@ -45,6 +52,10 @@ public class TaskDispatchService {
 
     public void dispatchDueOnceTasks(int limit) {
         OffsetDateTime now = OffsetDateTime.now();
+        int recovered = actionExecutionRepository.recoverStaleRunningExecutions(now);
+        if (recovered > 0) {
+            log.warn("Recovered stale RUNNING task action executions: count={}", recovered);
+        }
         taskPlanRepository.findDueScheduledPlans(now, limit).forEach(plan -> {
             List<TaskAction> nextActions = plan.tasks().stream()
                     .map(action -> dispatchIfDue(plan, action, now))
