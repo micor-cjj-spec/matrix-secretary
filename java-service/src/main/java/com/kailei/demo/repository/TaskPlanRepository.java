@@ -16,6 +16,7 @@ import com.kailei.demo.model.TaskTarget;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +24,8 @@ import java.util.Optional;
 
 @Repository
 public class TaskPlanRepository {
+
+    private static final int MAX_DISPATCH_QUERY_LIMIT = 500;
 
     private final TaskPlanMapper taskPlanMapper;
     private final TaskActionMapper taskActionMapper;
@@ -63,6 +66,24 @@ public class TaskPlanRepository {
                         .orderByDesc(TaskPlanEntity::getCreatedAt))
                 .stream()
                 .map(planEntity -> toDomain(planEntity, findActions(planEntity.getPlanId())))
+                .toList();
+    }
+
+    public List<TaskPlan> findDueScheduledPlans(OffsetDateTime now, int limit) {
+        int boundedLimit = Math.max(1, Math.min(limit, MAX_DISPATCH_QUERY_LIMIT));
+        List<String> planIds = taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
+                        .select(TaskActionEntity::getPlanId)
+                        .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                        .groupBy(TaskActionEntity::getPlanId)
+                        .last("limit " + boundedLimit))
+                .stream()
+                .map(TaskActionEntity::getPlanId)
+                .filter(planId -> planId != null && !planId.isBlank())
+                .toList();
+
+        return planIds.stream()
+                .map(this::findById)
+                .flatMap(Optional::stream)
                 .toList();
     }
 
