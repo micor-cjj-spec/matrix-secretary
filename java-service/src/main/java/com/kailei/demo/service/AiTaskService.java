@@ -18,7 +18,6 @@ import com.kailei.demo.skill.SkillDefinition;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -26,8 +25,6 @@ import java.util.stream.IntStream;
 
 @Service
 public class AiTaskService {
-
-    private static final String SYSTEM_OPERATOR = "system-scheduler";
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
@@ -38,6 +35,7 @@ public class AiTaskService {
     private final AiSessionRepository sessionRepository;
     private final TaskStateMachineService stateMachineService;
     private final TaskQueryService taskQueryService;
+    private final TaskDispatchService taskDispatchService;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
@@ -47,7 +45,8 @@ public class AiTaskService {
                          TaskExecutionLogRepository executionLogRepository,
                          AiSessionRepository sessionRepository,
                          TaskStateMachineService stateMachineService,
-                         TaskQueryService taskQueryService) {
+                         TaskQueryService taskQueryService,
+                         TaskDispatchService taskDispatchService) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
@@ -57,6 +56,7 @@ public class AiTaskService {
         this.sessionRepository = sessionRepository;
         this.stateMachineService = stateMachineService;
         this.taskQueryService = taskQueryService;
+        this.taskDispatchService = taskDispatchService;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
@@ -261,16 +261,7 @@ public class AiTaskService {
     }
 
     public void dispatchDueOnceTasks() {
-        OffsetDateTime now = OffsetDateTime.now();
-        repository.findAll().forEach(plan -> {
-            List<TaskAction> nextActions = plan.tasks().stream()
-                    .map(action -> dispatchIfDue(plan, action, now))
-                    .toList();
-            if (!nextActions.equals(plan.tasks())) {
-                TaskPlan saved = repository.save(plan.withStatus(stateMachineService.resolvePlanStatus(nextActions), nextActions));
-                sessionRepository.updateAfterPlanChange(saved);
-            }
-        });
+        taskDispatchService.dispatchDueOnceTasks();
     }
 
     private void ensureOperatorCanAccess(TaskPlan plan, String operatorUserId) {
@@ -293,32 +284,5 @@ public class AiTaskService {
         int scheduled = (int) actions.stream().filter(action -> action.status() == TaskStatus.SCHEDULED).count();
         int failed = (int) actions.stream().filter(action -> action.status() == TaskStatus.FAILED).count();
         return new ExecutionSummary(executed, scheduled, failed);
-    }
-
-    private TaskAction dispatchIfDue(TaskPlan plan, TaskAction action, OffsetDateTime now) {
-        if (action.status() != TaskStatus.SCHEDULED || action.schedule() == null) {
-            return action;
-        }
-        TaskSchedule schedule = cronScheduleService.ensureCronAndNextRun(action.schedule());
-        if (schedule == null || schedule.effectiveRunAt() == null) {
-            return action.withStatus(TaskStatus.FAILED, "调度任务缺少可执行时间或cron表达式");
-        }
-        try {
-            OffsetDateTime runAt = OffsetDateTime.parse(schedule.effectiveRunAt());
-            if (runAt.isAfter(now)) {
-                return action.withSchedule(schedule);
-            }
-            TaskAction executable = action.withSchedule(schedule);
-            TaskAction executed = executionService.executeNow(plan.planId(), plan.userId(), executable, SYSTEM_OPERATOR);
-            if (schedule.isRecurring() && executed.status() == TaskStatus.EXECUTED) {
-                TaskSchedule nextSchedule = cronScheduleService.markTriggered(schedule, now);
-                String note = "周期任务已执行，下一次触发: cron=" + nextSchedule.cron()
-                        + ", nextRunAt=" + nextSchedule.nextRunAt();
-                return executed.withSchedule(nextSchedule).withStatus(TaskStatus.SCHEDULED, note);
-            }
-            return executed;
-        } catch (DateTimeParseException ex) {
-            return action.withStatus(TaskStatus.FAILED, "时间格式无法解析: " + schedule.effectiveRunAt());
-        }
     }
 }
