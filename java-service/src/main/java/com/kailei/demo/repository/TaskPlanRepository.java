@@ -25,12 +25,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Repository
 public class TaskPlanRepository {
 
     private static final int MAX_DISPATCH_QUERY_LIMIT = 500;
     private static final long DISPATCH_LOCK_TIMEOUT_MS = 5 * 60 * 1000L;
+    private static final int DEFAULT_MAX_RETRY_COUNT = 3;
 
     private final TaskPlanMapper taskPlanMapper;
     private final TaskActionMapper taskActionMapper;
@@ -50,10 +53,13 @@ public class TaskPlanRepository {
         if (taskPlanMapper.updateById(planEntity) == 0) {
             taskPlanMapper.insert(planEntity);
         }
+        Map<String, TaskActionEntity> existingActions = findActions(plan.planId()).stream()
+                .collect(Collectors.toMap(TaskActionEntity::getActionId, Function.identity(), (left, right) -> left));
         taskActionMapper.delete(new LambdaQueryWrapper<TaskActionEntity>()
                 .eq(TaskActionEntity::getPlanId, plan.planId()));
         for (int i = 0; i < plan.tasks().size(); i++) {
-            taskActionMapper.insert(toActionEntity(plan.planId(), plan.tasks().get(i), i));
+            TaskAction action = plan.tasks().get(i);
+            taskActionMapper.insert(toActionEntity(plan.planId(), action, i, existingActions.get(action.actionId())));
         }
         return plan;
     }
@@ -80,12 +86,8 @@ public class TaskPlanRepository {
         String nowText = now.toString();
 
         Set<String> planIds = new LinkedHashSet<>();
-        taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
+        taskActionMapper.selectList(baseDueActionQuery(nowEpochMs)
                         .select(TaskActionEntity::getPlanId)
-                        .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
-                        .and(wrapper -> wrapper.isNull(TaskActionEntity::getLockedBy)
-                                .or()
-                                .lt(TaskActionEntity::getLockedAtEpochMs, nowEpochMs - DISPATCH_LOCK_TIMEOUT_MS))
                         .isNotNull(TaskActionEntity::getNextRunAtEpochMs)
                         .le(TaskActionEntity::getNextRunAtEpochMs, nowEpochMs)
                         .orderByAsc(TaskActionEntity::getNextRunAtEpochMs)
@@ -97,12 +99,8 @@ public class TaskPlanRepository {
 
         if (planIds.size() < boundedLimit) {
             int remaining = boundedLimit - planIds.size();
-            taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
+            taskActionMapper.selectList(baseDueActionQuery(nowEpochMs)
                             .select(TaskActionEntity::getPlanId)
-                            .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
-                            .and(wrapper -> wrapper.isNull(TaskActionEntity::getLockedBy)
-                                    .or()
-                                    .lt(TaskActionEntity::getLockedAtEpochMs, nowEpochMs - DISPATCH_LOCK_TIMEOUT_MS))
                             .isNull(TaskActionEntity::getNextRunAtEpochMs)
                             .isNotNull(TaskActionEntity::getNextRunAt)
                             .ne(TaskActionEntity::getNextRunAt, "")
@@ -133,7 +131,8 @@ public class TaskPlanRepository {
                 .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
                 .and(wrapper -> wrapper.isNull(TaskActionEntity::getLockedBy)
                         .or()
-                        .lt(TaskActionEntity::getLockedAtEpochMs, expiredBefore)));
+                        .lt(TaskActionEntity::getLockedAtEpochMs, expiredBefore))
+                .apply("(execution_attempt is null or max_retry_count is null or execution_attempt < max_retry_count)"));
         return updated == 1;
     }
 
@@ -168,6 +167,15 @@ public class TaskPlanRepository {
                 .toList();
     }
 
+    private LambdaQueryWrapper<TaskActionEntity> baseDueActionQuery(long nowEpochMs) {
+        return new LambdaQueryWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                .and(wrapper -> wrapper.isNull(TaskActionEntity::getLockedBy)
+                        .or()
+                        .lt(TaskActionEntity::getLockedAtEpochMs, nowEpochMs - DISPATCH_LOCK_TIMEOUT_MS))
+                .apply("(execution_attempt is null or max_retry_count is null or execution_attempt < max_retry_count)");
+    }
+
     private List<TaskActionEntity> findActions(String planId) {
         return taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
                 .eq(TaskActionEntity::getPlanId, planId)
@@ -188,7 +196,7 @@ public class TaskPlanRepository {
         return entity;
     }
 
-    private TaskActionEntity toActionEntity(String planId, TaskAction action, int sortOrder) {
+    private TaskActionEntity toActionEntity(String planId, TaskAction action, int sortOrder, TaskActionEntity existing) {
         TaskActionEntity entity = new TaskActionEntity();
         TaskSchedule schedule = action.schedule();
         String effectiveRunAt = schedule == null ? null : schedule.effectiveRunAt();
@@ -208,6 +216,8 @@ public class TaskPlanRepository {
         entity.setTriggerCount(schedule == null ? 0 : schedule.triggerCount());
         entity.setLockedBy(null);
         entity.setLockedAtEpochMs(null);
+        entity.setExecutionAttempt(resolveNextExecutionAttempt(action, existing));
+        entity.setMaxRetryCount(resolveMaxRetryCount(existing));
         entity.setArgsJson(writeJson(action.args()));
         entity.setPriority(limit(action.priority(), 32));
         entity.setRiskLevel(limit(action.riskLevel(), 32));
@@ -219,6 +229,25 @@ public class TaskPlanRepository {
         entity.setExecutionNote(limit(action.executionNote(), 512));
         entity.setSortOrder(sortOrder);
         return entity;
+    }
+
+    private int resolveNextExecutionAttempt(TaskAction action, TaskActionEntity existing) {
+        int currentAttempt = existing == null || existing.getExecutionAttempt() == null ? 0 : existing.getExecutionAttempt();
+        String existingStatus = existing == null ? null : existing.getStatus();
+        if (action.status() == TaskStatus.FAILED && !TaskStatus.FAILED.name().equals(existingStatus)) {
+            return currentAttempt + 1;
+        }
+        if (action.status() == TaskStatus.EXECUTED) {
+            return 0;
+        }
+        return currentAttempt;
+    }
+
+    private int resolveMaxRetryCount(TaskActionEntity existing) {
+        if (existing == null || existing.getMaxRetryCount() == null || existing.getMaxRetryCount() <= 0) {
+            return DEFAULT_MAX_RETRY_COUNT;
+        }
+        return existing.getMaxRetryCount();
     }
 
     private TaskPlan toDomain(TaskPlanEntity planEntity, List<TaskActionEntity> actionEntities) {
