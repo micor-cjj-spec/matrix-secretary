@@ -43,6 +43,12 @@ public class TaskStateMachineService {
         }
     }
 
+    public void ensureCanResolveManualReview(TaskPlan plan, TaskAction action) {
+        if (action.status() != TaskStatus.NEEDS_MANUAL_REVIEW) {
+            throw new IllegalArgumentException("只有 NEEDS_MANUAL_REVIEW 状态的动作允许人工处理: " + action.actionId());
+        }
+    }
+
     public TaskStatus resolvePlanStatus(List<TaskAction> actions) {
         if (actions.stream().allMatch(action -> action.status() == TaskStatus.CANCELLED)) {
             return TaskStatus.CANCELLED;
