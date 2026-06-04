@@ -83,6 +83,12 @@ public class TaskActionEntity {
     @ColumnComment("调度锁时间epoch毫秒")
     private Long lockedAtEpochMs;
 
+    @ColumnComment("执行尝试次数")
+    private Integer executionAttempt;
+
+    @ColumnComment("最大重试次数")
+    private Integer maxRetryCount;
+
     @ColumnType(MysqlTypeConstant.JSON)
     @ColumnComment("技能参数JSON")
     private String argsJson;
@@ -153,6 +159,10 @@ public class TaskActionEntity {
     public void setLockedBy(String lockedBy) { this.lockedBy = lockedBy; }
     public Long getLockedAtEpochMs() { return lockedAtEpochMs; }
     public void setLockedAtEpochMs(Long lockedAtEpochMs) { this.lockedAtEpochMs = lockedAtEpochMs; }
+    public Integer getExecutionAttempt() { return executionAttempt; }
+    public void setExecutionAttempt(Integer executionAttempt) { this.executionAttempt = executionAttempt; }
+    public Integer getMaxRetryCount() { return maxRetryCount; }
+    public void setMaxRetryCount(Integer maxRetryCount) { this.maxRetryCount = maxRetryCount; }
     public String getArgsJson() { return argsJson; }
     public void setArgsJson(String argsJson) { this.argsJson = argsJson; }
     public String getPriority() { return priority; }
