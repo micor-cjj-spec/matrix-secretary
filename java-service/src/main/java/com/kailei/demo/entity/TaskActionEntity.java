@@ -89,6 +89,11 @@ public class TaskActionEntity {
     @ColumnComment("最大重试次数")
     private Integer maxRetryCount;
 
+    @Index
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 128)
+    @ColumnComment("执行幂等键")
+    private String idempotencyKey;
+
     @ColumnType(MysqlTypeConstant.JSON)
     @ColumnComment("技能参数JSON")
     private String argsJson;
@@ -163,6 +168,8 @@ public class TaskActionEntity {
     public void setExecutionAttempt(Integer executionAttempt) { this.executionAttempt = executionAttempt; }
     public Integer getMaxRetryCount() { return maxRetryCount; }
     public void setMaxRetryCount(Integer maxRetryCount) { this.maxRetryCount = maxRetryCount; }
+    public String getIdempotencyKey() { return idempotencyKey; }
+    public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
     public String getArgsJson() { return argsJson; }
     public void setArgsJson(String argsJson) { this.argsJson = argsJson; }
     public String getPriority() { return priority; }
