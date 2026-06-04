@@ -12,8 +12,10 @@
 
 - [AI Secretary 架构演进与改造规则](docs/AI_SECRETARY_EVOLUTION_PLAN.md)
 - [阶段一：任务中心稳定化](docs/PHASE_1_TASK_CENTER.md)
+- [任务中心平台化设计方案](docs/TASK_CENTER_PLATFORM_DESIGN.md)
+- [Task Center API 说明](docs/TASK_CENTER_API.md)
 
-这些文档约束后续改造方向：项目不应被改造成普通聊天机器人，而应演进为可确认、可编辑、可调度、可审计、可扩展 Skill 的 AI 秘书任务执行系统。
+这些文档约束后续改造方向：项目不应被改造成普通聊天机器人，而应演进为可确认、可编辑、可调度、可审计、可扩展 Skill 的任务中心平台。`/api/ai-task/**` 是 AI 秘书兼容入口，`/api/task-center/**` 是任务中心平台入口。
 
 ## 目录结构
 
@@ -188,6 +190,8 @@ Java 接口：
 
 ```text
 GET   http://127.0.0.1:10002/api/skills
+
+# AI 秘书兼容入口
 POST  http://127.0.0.1:10002/api/ai-task/preview
 PATCH http://127.0.0.1:10002/api/ai-task/{planId}/actions/{actionId}
 POST  http://127.0.0.1:10002/api/ai-task/{planId}/confirm
@@ -197,7 +201,20 @@ GET   http://127.0.0.1:10002/api/ai-task/{planId}?userId=demo-user
 GET   http://127.0.0.1:10002/api/ai-task?userId=demo-user
 GET   http://127.0.0.1:10002/api/ai-task/{planId}/logs?userId=demo-user
 GET   http://127.0.0.1:10002/api/ai-task/{planId}/actions/{actionId}/logs?userId=demo-user
+
+# 任务中心平台入口
+POST  http://127.0.0.1:10002/api/task-center/plans/preview
+PATCH http://127.0.0.1:10002/api/task-center/plans/{planId}/actions/{actionId}
+POST  http://127.0.0.1:10002/api/task-center/plans/{planId}/confirm
+POST  http://127.0.0.1:10002/api/task-center/plans/{planId}/cancel
+POST  http://127.0.0.1:10002/api/task-center/plans/{planId}/actions/{actionId}/retry
+GET   http://127.0.0.1:10002/api/task-center/plans/{planId}?userId=demo-user
+GET   http://127.0.0.1:10002/api/task-center/plans?userId=demo-user
+GET   http://127.0.0.1:10002/api/task-center/plans/{planId}/logs?userId=demo-user
+GET   http://127.0.0.1:10002/api/task-center/plans/{planId}/actions/{actionId}/logs?userId=demo-user
 ```
+
+任务中心平台 API 详细说明见：[Task Center API 说明](docs/TASK_CENTER_API.md)。
 
 ## 启动 Docker 基础设施和 XXL-JOB
 
@@ -266,7 +283,7 @@ mvn spring-boot:run
 ## 示例请求
 
 ```http
-POST /api/ai-task/preview
+POST /api/task-center/plans/preview
 Content-Type: application/json
 ```
 
@@ -298,7 +315,7 @@ Content-Type: application/json
 确认前编辑单个任务动作：
 
 ```http
-PATCH /api/ai-task/{planId}/actions/{actionId}
+PATCH /api/task-center/plans/{planId}/actions/{actionId}
 Content-Type: application/json
 ```
 
@@ -337,7 +354,7 @@ Content-Type: application/json
 预览或编辑后再确认：
 
 ```http
-POST /api/ai-task/{planId}/confirm
+POST /api/task-center/plans/{planId}/confirm
 Content-Type: application/json
 ```
 
@@ -350,7 +367,7 @@ Content-Type: application/json
 取消未执行任务：
 
 ```http
-POST /api/ai-task/{planId}/cancel
+POST /api/task-center/plans/{planId}/cancel
 Content-Type: application/json
 ```
 
@@ -364,7 +381,7 @@ Content-Type: application/json
 重试失败动作：
 
 ```http
-POST /api/ai-task/{planId}/actions/{actionId}/retry
+POST /api/task-center/plans/{planId}/actions/{actionId}/retry
 Content-Type: application/json
 ```
 
@@ -384,7 +401,7 @@ Java 服务会通过 `GlobalExceptionHandler` 将常见异常收敛为统一 JSO
 {
   "code": "BAD_REQUEST",
   "message": "只有 WAITING_CONFIRM 状态的任务计划允许编辑: plan-xxxx",
-  "path": "/api/ai-task/plan-xxxx/actions/act-1",
+  "path": "/api/task-center/plans/plan-xxxx/actions/act-1",
   "traceId": "err-12ab34cd",
   "timestamp": "2026-06-02T10:00:00+08:00",
   "details": {}
@@ -427,11 +444,11 @@ WAITING_CONFIRM
 
 ## 后续演进
 
-详细规则见 [AI Secretary 架构演进与改造规则](docs/AI_SECRETARY_EVOLUTION_PLAN.md)。
+详细规则见 [AI Secretary 架构演进与改造规则](docs/AI_SECRETARY_EVOLUTION_PLAN.md) 和 [任务中心平台化设计方案](docs/TASK_CENTER_PLATFORM_DESIGN.md)。
 
 近期重点：
 
-- 继续完善阶段一任务中心稳定化，详见 [阶段一文档](docs/PHASE_1_TASK_CENTER.md)。
+- 继续完善任务中心平台入口 `/api/task-center/**`。
 - 增加任务编辑、取消、重试能力的自动化测试。
 - 增加 API Key / JWT 鉴权和 userId 数据隔离。
 - 将模拟执行器替换为真实邮件、提醒、待办、消息执行器。
