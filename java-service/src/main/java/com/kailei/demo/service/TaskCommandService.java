@@ -3,6 +3,7 @@ package com.kailei.demo.service;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.ExecutionSummary;
+import com.kailei.demo.model.ResolveManualReviewRequest;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.model.TaskSchedule;
@@ -147,6 +148,58 @@ public class TaskCommandService {
         TaskPlan saved = taskPlanRepository.save(nextPlan);
         sessionRepository.updateAfterPlanChange(saved);
         return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
+    }
+
+    public ConfirmTaskResponse resolveManualReview(String planId, String actionId, ResolveManualReviewRequest request) {
+        TaskPlan plan = taskQueryService.get(planId);
+        String requestedOperator = request == null ? null : request.operatorUserId();
+        ensureOperatorCanAccess(plan, requestedOperator);
+        String effectiveOperator = effectiveOperator(requestedOperator, plan.userId());
+        List<TaskAction> nextActions = new ArrayList<>();
+        boolean matched = false;
+        for (TaskAction action : plan.tasks()) {
+            if (!action.actionId().equals(actionId)) {
+                nextActions.add(action);
+                continue;
+            }
+            matched = true;
+            stateMachineService.ensureCanResolveManualReview(plan, action);
+            TaskSchedule nextSchedule = request == null || request.schedule() == null
+                    ? action.schedule()
+                    : cronScheduleService.ensureCronAndNextRun(request.schedule());
+            TaskAction fixed = action.withEditableFields(
+                    request == null ? null : request.title(),
+                    request == null ? null : request.content(),
+                    request == null ? null : request.target(),
+                    nextSchedule,
+                    request == null ? null : request.args(),
+                    request == null ? null : request.priority(),
+                    request == null ? null : request.requiresConfirmation()
+            );
+            TaskAction next;
+            if (Boolean.TRUE.equals(request == null ? null : request.executeNow()) || fixed.schedule() == null || !fixed.schedule().isScheduled()) {
+                next = executionService.executeNow(plan.planId(), plan.userId(), fixed.withStatus(TaskStatus.CONFIRMED, resolveNote(request)), effectiveOperator);
+            } else {
+                TaskSchedule scheduled = cronScheduleService.ensureCronAndNextRun(fixed.schedule());
+                next = fixed.withSchedule(scheduled).withStatus(TaskStatus.SCHEDULED, resolveNote(request) + "; 已重新进入调度队列");
+            }
+            executionLogRepository.logStateChange(plan.planId(), action, next, effectiveOperator);
+            nextActions.add(next);
+        }
+        if (!matched) {
+            throw new IllegalArgumentException("任务动作不存在: " + actionId);
+        }
+        TaskPlan nextPlan = plan.withStatus(stateMachineService.resolvePlanStatus(nextActions), nextActions);
+        TaskPlan saved = taskPlanRepository.save(nextPlan);
+        sessionRepository.updateAfterPlanChange(saved);
+        return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
+    }
+
+    private String resolveNote(ResolveManualReviewRequest request) {
+        if (request != null && request.note() != null && !request.note().isBlank()) {
+            return "人工处理完成: " + request.note();
+        }
+        return "人工处理完成";
     }
 
     private void ensureOperatorCanAccess(TaskPlan plan, String operatorUserId) {
