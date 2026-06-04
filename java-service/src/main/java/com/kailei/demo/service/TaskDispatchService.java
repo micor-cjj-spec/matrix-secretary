@@ -8,15 +8,18 @@ import com.kailei.demo.repository.AiSessionRepository;
 import com.kailei.demo.repository.TaskPlanRepository;
 import org.springframework.stereotype.Service;
 
+import java.lang.management.ManagementFactory;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class TaskDispatchService {
 
     private static final String SYSTEM_OPERATOR = "system-scheduler";
     private static final int DEFAULT_DISPATCH_LIMIT = 100;
+    private final String schedulerInstanceId = buildSchedulerInstanceId();
 
     private final TaskPlanRepository taskPlanRepository;
     private final TaskExecutionService executionService;
@@ -66,17 +69,30 @@ public class TaskDispatchService {
             if (runAt.isAfter(now)) {
                 return action.withSchedule(schedule);
             }
-            TaskAction executable = action.withSchedule(schedule);
-            TaskAction executed = executionService.executeNow(plan.planId(), plan.userId(), executable, SYSTEM_OPERATOR);
-            if (schedule.isRecurring() && executed.status() == TaskStatus.EXECUTED) {
-                TaskSchedule nextSchedule = cronScheduleService.markTriggered(schedule, now);
-                String note = "周期任务已执行，下一次触发: cron=" + nextSchedule.cron()
-                        + ", nextRunAt=" + nextSchedule.nextRunAt();
-                return executed.withSchedule(nextSchedule).withStatus(TaskStatus.SCHEDULED, note);
+            boolean locked = taskPlanRepository.tryLockAction(action.actionId(), schedulerInstanceId, now);
+            if (!locked) {
+                return action;
             }
-            return executed;
+            try {
+                TaskAction executable = action.withSchedule(schedule);
+                TaskAction executed = executionService.executeNow(plan.planId(), plan.userId(), executable, SYSTEM_OPERATOR);
+                if (schedule.isRecurring() && executed.status() == TaskStatus.EXECUTED) {
+                    TaskSchedule nextSchedule = cronScheduleService.markTriggered(schedule, now);
+                    String note = "周期任务已执行，下一次触发: cron=" + nextSchedule.cron()
+                            + ", nextRunAt=" + nextSchedule.nextRunAt();
+                    return executed.withSchedule(nextSchedule).withStatus(TaskStatus.SCHEDULED, note);
+                }
+                return executed;
+            } finally {
+                taskPlanRepository.releaseActionLock(action.actionId(), schedulerInstanceId);
+            }
         } catch (DateTimeParseException ex) {
             return action.withStatus(TaskStatus.FAILED, "时间格式无法解析: " + schedule.effectiveRunAt());
         }
+    }
+
+    private String buildSchedulerInstanceId() {
+        String runtimeName = ManagementFactory.getRuntimeMXBean().getName();
+        return "scheduler-" + runtimeName + "-" + UUID.randomUUID().toString().substring(0, 8);
     }
 }
