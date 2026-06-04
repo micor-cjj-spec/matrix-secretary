@@ -17,10 +17,13 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @Repository
 public class TaskPlanRepository {
@@ -71,22 +74,41 @@ public class TaskPlanRepository {
 
     public List<TaskPlan> findDueScheduledPlans(OffsetDateTime now, int limit) {
         int boundedLimit = Math.max(1, Math.min(limit, MAX_DISPATCH_QUERY_LIMIT));
+        long nowEpochMs = now.toInstant().toEpochMilli();
         String nowText = now.toString();
-        List<String> planIds = taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
+
+        Set<String> planIds = new LinkedHashSet<>();
+        taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
                         .select(TaskActionEntity::getPlanId)
                         .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
-                        .isNotNull(TaskActionEntity::getNextRunAt)
-                        .ne(TaskActionEntity::getNextRunAt, "")
-                        .le(TaskActionEntity::getNextRunAt, nowText)
-                        .groupBy(TaskActionEntity::getPlanId)
-                        .orderByAsc(TaskActionEntity::getNextRunAt)
+                        .isNotNull(TaskActionEntity::getNextRunAtEpochMs)
+                        .le(TaskActionEntity::getNextRunAtEpochMs, nowEpochMs)
+                        .orderByAsc(TaskActionEntity::getNextRunAtEpochMs)
                         .last("limit " + boundedLimit))
                 .stream()
                 .map(TaskActionEntity::getPlanId)
                 .filter(planId -> planId != null && !planId.isBlank())
-                .toList();
+                .forEach(planIds::add);
+
+        if (planIds.size() < boundedLimit) {
+            int remaining = boundedLimit - planIds.size();
+            taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
+                            .select(TaskActionEntity::getPlanId)
+                            .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                            .isNull(TaskActionEntity::getNextRunAtEpochMs)
+                            .isNotNull(TaskActionEntity::getNextRunAt)
+                            .ne(TaskActionEntity::getNextRunAt, "")
+                            .le(TaskActionEntity::getNextRunAt, nowText)
+                            .orderByAsc(TaskActionEntity::getNextRunAt)
+                            .last("limit " + remaining))
+                    .stream()
+                    .map(TaskActionEntity::getPlanId)
+                    .filter(planId -> planId != null && !planId.isBlank())
+                    .forEach(planIds::add);
+        }
 
         return planIds.stream()
+                .limit(boundedLimit)
                 .map(this::findById)
                 .flatMap(Optional::stream)
                 .toList();
@@ -137,6 +159,7 @@ public class TaskPlanRepository {
     private TaskActionEntity toActionEntity(String planId, TaskAction action, int sortOrder) {
         TaskActionEntity entity = new TaskActionEntity();
         TaskSchedule schedule = action.schedule();
+        String effectiveRunAt = schedule == null ? null : schedule.effectiveRunAt();
         entity.setActionId(action.actionId());
         entity.setPlanId(planId);
         entity.setActionType(action.actionType());
@@ -147,7 +170,8 @@ public class TaskPlanRepository {
         entity.setScheduleJson(writeJson(schedule));
         entity.setScheduleType(schedule == null ? null : limit(schedule.scheduleType(), 32));
         entity.setRunAt(schedule == null ? null : limit(schedule.runAt(), 64));
-        entity.setNextRunAt(schedule == null ? null : limit(schedule.effectiveRunAt(), 64));
+        entity.setNextRunAt(limit(effectiveRunAt, 64));
+        entity.setNextRunAtEpochMs(toEpochMs(effectiveRunAt));
         entity.setLastRunAt(schedule == null ? null : limit(schedule.lastRunAt(), 64));
         entity.setTriggerCount(schedule == null ? 0 : schedule.triggerCount());
         entity.setArgsJson(writeJson(action.args()));
@@ -217,6 +241,17 @@ public class TaskPlanRepository {
                 entity.getLastRunAt(),
                 entity.getTriggerCount()
         );
+    }
+
+    private Long toEpochMs(String offsetDateTimeText) {
+        if (offsetDateTimeText == null || offsetDateTimeText.isBlank()) {
+            return null;
+        }
+        try {
+            return OffsetDateTime.parse(offsetDateTimeText).toInstant().toEpochMilli();
+        } catch (DateTimeParseException ex) {
+            return null;
+        }
     }
 
     private String writeJson(Object value) {
