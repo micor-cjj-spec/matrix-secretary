@@ -49,7 +49,7 @@ public class GenericSkillExecutor {
         try {
             validator.validate(skill, action);
         } catch (IllegalArgumentException ex) {
-            return action.withStatus(TaskStatus.FAILED, ex.getMessage());
+            return action.withStatus(TaskStatus.NEEDS_MANUAL_REVIEW, "参数校验失败，需要人工处理: " + ex.getMessage());
         }
         String type = skill.execution().type();
         return switch (type) {
@@ -57,7 +57,7 @@ public class GenericSkillExecutor {
             case "http" -> executeHttp(skill, action);
             case "prompt" -> action.withStatus(TaskStatus.EXECUTED, "已生成文本型任务: " + action.content());
             case "noop" -> action.withStatus(TaskStatus.EXECUTED, "已记录任务，等待人工处理: " + action.content());
-            default -> action.withStatus(TaskStatus.FAILED, "不支持的 Skill 执行类型: " + type);
+            default -> action.withStatus(TaskStatus.FAILED_FINAL, "不支持的 Skill 执行类型: " + type);
         };
     }
 
@@ -69,7 +69,7 @@ public class GenericSkillExecutor {
             case "email" -> createEmailDraftAndMaybeSend(planId, userId, action);
             case "message", "reply" -> executeChannelMessage(planId, userId, skill, action);
             case "schedule" -> mockExecuted(skill, action, "模拟创建定时任务: " + action.content());
-            default -> mockExecuted(skill, action, "模拟执行 Skill[" + skill.name() + "]: " + action.content());
+            default -> action.withStatus(TaskStatus.FAILED_FINAL, "不支持的 builtin executor: " + executor);
         };
     }
 
@@ -84,6 +84,9 @@ public class GenericSkillExecutor {
     private TaskAction executeChannelMessage(String planId, String userId, SkillDefinition skill, TaskAction action) {
         try {
             return channelMessageExecutor.send(planId, userId, action);
+        } catch (IllegalArgumentException ex) {
+            log.warn("Channel message skill [{}] action [{}] invalid args", skill.name(), action.actionId(), ex);
+            return action.withStatus(TaskStatus.NEEDS_MANUAL_REVIEW, "渠道消息参数错误，需要人工处理: " + ex.getMessage());
         } catch (Exception ex) {
             log.warn("Channel message skill [{}] action [{}] failed", skill.name(), action.actionId(), ex);
             return action.withStatus(TaskStatus.FAILED, "渠道消息发送失败: " + ex.getClass().getSimpleName());
@@ -110,7 +113,7 @@ public class GenericSkillExecutor {
 
     private TaskAction createNotification(String planId, String userId, TaskAction action, String type, String prefix) {
         if (userId == null || userId.isBlank()) {
-            return action.withStatus(TaskStatus.FAILED, "创建站内通知失败: 缺少 userId");
+            return action.withStatus(TaskStatus.NEEDS_MANUAL_REVIEW, "创建站内通知失败: 缺少 userId，需要人工处理");
         }
         NotificationEntity notification = notificationRepository.createFromAction(userId, planId, action, type);
         String note = prefix + ": notificationId=" + notification.getId();
@@ -120,7 +123,7 @@ public class GenericSkillExecutor {
 
     private TaskAction createEmailDraftAndMaybeSend(String planId, String userId, TaskAction action) {
         if (userId == null || userId.isBlank()) {
-            return action.withStatus(TaskStatus.FAILED, "创建邮件草稿失败: 缺少 userId");
+            return action.withStatus(TaskStatus.NEEDS_MANUAL_REVIEW, "创建邮件草稿失败: 缺少 userId，需要人工处理");
         }
         EmailDraftEntity draft = emailDraftRepository.createDraft(userId, planId, action);
         EmailSandboxService.SendResult sendResult = emailSandboxService.sendDraftToSandbox(draft);
@@ -147,7 +150,7 @@ public class GenericSkillExecutor {
     private TaskAction executeHttp(SkillDefinition skill, TaskAction action) {
         SkillExecution execution = skill.execution();
         if (execution.url() == null || execution.url().isBlank()) {
-            return action.withStatus(TaskStatus.FAILED, "HTTP Skill 缺少 url: " + skill.name());
+            return action.withStatus(TaskStatus.FAILED_FINAL, "HTTP Skill 缺少 url: " + skill.name());
         }
         String url = renderer.renderString(execution.url(), action);
         Map<String, Object> query = renderer.renderMap(execution.query(), action);
@@ -171,6 +174,9 @@ public class GenericSkillExecutor {
             }
             log.info("HTTP skill [{}] action [{}] called {}", skill.name(), action.actionId(), url);
             return action.withStatus(TaskStatus.EXECUTED, "HTTP Skill 调用成功: " + response);
+        } catch (IllegalArgumentException ex) {
+            log.warn("HTTP skill [{}] action [{}] invalid args", skill.name(), action.actionId(), ex);
+            return action.withStatus(TaskStatus.NEEDS_MANUAL_REVIEW, "HTTP Skill 参数错误，需要人工处理: " + ex.getMessage());
         } catch (Exception ex) {
             log.warn("HTTP skill [{}] action [{}] failed", skill.name(), action.actionId(), ex);
             return action.withStatus(TaskStatus.FAILED, "HTTP Skill 调用失败: " + ex.getClass().getSimpleName());
