@@ -91,14 +91,15 @@ private static final int DEFAULT_DISPATCH_LIMIT = 100;
 
 ```text
 1. OffsetDateTime now = OffsetDateTime.now()
-2. taskPlanRepository.findDueScheduledPlans(now, limit)
-3. 遍历 plan.tasks()
-4. 对 SCHEDULED 且 schedule 不为空的 action 做最终兜底判断
-5. 执行前调用 tryLockAction 抢占 action 锁
-6. 抢锁成功后 executeNow
-7. 周期任务执行成功后 markTriggered 并继续保持 SCHEDULED
-8. finally 中 releaseActionLock
-9. 保存 TaskPlan 并更新 Session
+2. recoverStaleRunningExecutions(now) 恢复超时 RUNNING 执行记录
+3. taskPlanRepository.findDueScheduledPlans(now, limit)
+4. 遍历 plan.tasks()
+5. 对 SCHEDULED 且 schedule 不为空的 action 做最终兜底判断
+6. 执行前调用 tryLockAction 抢占 action 锁
+7. 抢锁成功后 executeNow
+8. 周期任务执行成功后 markTriggered 并继续保持 SCHEDULED
+9. finally 中 releaseActionLock
+10. 保存 TaskPlan 并更新 Session
 ```
 
 说明：Repository 已经做第一层到期过滤，`TaskDispatchService` 中的时间判断仍保留，作为兜底保护。
@@ -179,6 +180,7 @@ private String idempotencyKey;
 tryBeginExecution(planId, userId, skill, action, operatorUserId)
 findExecutedByIdempotencyKey(idempotencyKey)
 record(planId, userId, skill, before, after, operatorUserId)
+recoverStaleRunningExecutions(now)
 ```
 
 当前执行记录状态：
@@ -195,11 +197,18 @@ FAILED
 1. 从 TaskAction.args 读取 idempotencyKey。
 2. 如果没有 idempotencyKey，则直接放行执行。
 3. 如果已存在同 key 且状态为 EXECUTED，返回 EXECUTED，调用方跳过真实执行。
-4. 如果已存在同 key 且状态为 RUNNING，返回 RUNNING，调用方跳过本次重复触发。
-5. 如果不存在同 key，则使用 idempotencyKey 的 SHA-256 生成确定性执行记录 ID。
-6. 先插入 RUNNING 执行记录，插入成功才允许调用 GenericSkillExecutor。
-7. 如果并发插入发生主键冲突，则回查已有记录并按 EXECUTED / RUNNING 分支处理。
-8. 执行完成后 record(...) 将 RUNNING 更新为 EXECUTED 或 FAILED。
+4. 如果已存在同 key 且状态为 RUNNING，并且未超时，返回 RUNNING，调用方跳过本次重复触发。
+5. 如果已存在同 key 且状态为 RUNNING，但已超时，先恢复为 FAILED，再尝试重新标记 RUNNING。
+6. 如果不存在同 key，则使用 idempotencyKey 的 SHA-256 生成确定性执行记录 ID。
+7. 先插入 RUNNING 执行记录，插入成功才允许调用 GenericSkillExecutor。
+8. 如果并发插入发生主键冲突，则回查已有记录并按 EXECUTED / RUNNING 分支处理。
+9. 执行完成后 record(...) 将 RUNNING 更新为 EXECUTED 或 FAILED。
+```
+
+当前 RUNNING 超时：
+
+```java
+private static final long RUNNING_TIMEOUT_MINUTES = 10;
 ```
 
 `TaskExecutionService.executeNow()` 当前执行规则：
@@ -213,7 +222,7 @@ FAILED
 6. 继续写 TaskExecutionLog。
 ```
 
-这一步已经把幂等从“执行前查询”推进到“执行前原子占位 + 执行后更新”。
+这一步已经把幂等从“执行前查询”推进到“执行前原子占位 + 执行后更新 + RUNNING 超时恢复”。
 
 ## 3. 已完成优化
 
@@ -304,7 +313,7 @@ idempotencyKey    = 旧值 / args.idempotencyKey / planId:actionId:triggerCount
 3. 当前 save(plan) 会重建 action 行；虽然已保留 executionAttempt / maxRetryCount / idempotencyKey，但后续仍应改成 action 级别更新。
 4. executionAttempt 当前只在状态变为 FAILED 时累加；如果未来做“FAILED 自动重新调度”，需要进一步扩展退避策略。
 5. 执行记录 ID 已经按 idempotencyKey 确定性生成，但 idempotencyKey 字段本身还没有数据库唯一约束。
-6. RUNNING 执行记录目前没有超时恢复逻辑，执行器进程异常退出时需要后续恢复任务处理。
+6. RUNNING 恢复目前按 updatedAt 超时标记 FAILED，后续可细化为分 skill 的超时时间。
 ```
 
 ## 5. 后续推荐演进
@@ -365,14 +374,15 @@ lastErrorMessage
 
 避免失败任务高频重复执行。
 
-### 5.5 增加 RUNNING 超时恢复
+### 5.5 细化 RUNNING 超时恢复
 
-后续需要增加恢复任务：
+后续可以继续增强：
 
 ```text
-1. 扫描 ai_task_action_execution 中长时间 RUNNING 的记录。
-2. 根据业务策略标记 FAILED 或重新放行。
-3. 结合 action lockedAtEpochMs 释放卡住的执行锁。
+1. 不同 skill 配置不同执行超时时间。
+2. 恢复时同步释放 action lockedBy / lockedAtEpochMs。
+3. 恢复时写入专门的系统审计日志。
+4. 对多次 RUNNING 超时的 action 进入人工检查状态。
 ```
 
 ## 6. 验收建议
@@ -391,18 +401,19 @@ lastErrorMessage
 9. 查询 action 返回结果，确认 args.idempotencyKey 存在。
 10. 重复执行同一个 idempotencyKey 的 action，确认第二次不会调用真实执行器。
 11. 并发触发同一个 idempotencyKey，确认只有一个请求能插入 RUNNING 执行记录并进入真实执行。
+12. 手动把 ai_task_action_execution.updated_at 改到 10 分钟以前且 status=RUNNING，确认下次调度会恢复为 FAILED。
 ```
 
 ## 7. 当前结论
 
-本阶段完成的是调度可靠性的第八步：
+本阶段完成的是调度可靠性的第九步：
 
 ```text
-从执行前查重，升级为执行前原子占位 + 执行后记录。
+从执行前原子占位，升级为 RUNNING 执行记录超时恢复。
 ```
 
 真正的生产级调度还需要继续完成：
 
 ```text
-历史数据回填、组合索引、唯一约束、action 级别保存、失败退避、RUNNING 超时恢复。
+历史数据回填、组合索引、唯一约束、action 级别保存、失败退避、分 skill 超时策略。
 ```
