@@ -57,6 +57,13 @@ public class TaskCenterSchemaInitializer implements ApplicationRunner {
                 "alter table ai_task_action "
                         + "add index idx_task_action_plan_status (plan_id, status)"
         );
+        ensureIndex(
+                "ai_task_action",
+                "idx_task_action_status_retry_next_run",
+                "alter table ai_task_action "
+                        + "add index idx_task_action_status_retry_next_run "
+                        + "(status, next_retry_at_epoch_ms, next_run_at_epoch_ms)"
+        );
     }
 
     private void ensureIndex(String tableName, String indexName, String ddl) {
