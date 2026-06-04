@@ -138,6 +138,42 @@ public class TaskPlanRepository {
                 .toList();
     }
 
+    @Transactional
+    public List<TaskPlan> rescheduleRetryableFailedPlans(OffsetDateTime now, int limit) {
+        int boundedLimit = Math.max(1, Math.min(limit, MAX_DISPATCH_QUERY_LIMIT));
+        long nowEpochMs = now.toInstant().toEpochMilli();
+        List<TaskActionEntity> retryableActions = taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
+                .select(TaskActionEntity::getActionId, TaskActionEntity::getPlanId)
+                .eq(TaskActionEntity::getStatus, TaskStatus.FAILED.name())
+                .isNotNull(TaskActionEntity::getNextRetryAtEpochMs)
+                .le(TaskActionEntity::getNextRetryAtEpochMs, nowEpochMs)
+                .apply("(execution_attempt is null or max_retry_count is null or execution_attempt < max_retry_count)")
+                .orderByAsc(TaskActionEntity::getNextRetryAtEpochMs)
+                .last("limit " + boundedLimit));
+
+        Set<String> planIds = new LinkedHashSet<>();
+        for (TaskActionEntity action : retryableActions) {
+            int updated = taskActionMapper.update(null, new LambdaUpdateWrapper<TaskActionEntity>()
+                    .set(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                    .set(TaskActionEntity::getExecutionNote, "失败重试退避已到期，重新进入调度队列")
+                    .set(TaskActionEntity::getLockedBy, null)
+                    .set(TaskActionEntity::getLockedAtEpochMs, null)
+                    .eq(TaskActionEntity::getActionId, action.getActionId())
+                    .eq(TaskActionEntity::getStatus, TaskStatus.FAILED.name())
+                    .isNotNull(TaskActionEntity::getNextRetryAtEpochMs)
+                    .le(TaskActionEntity::getNextRetryAtEpochMs, nowEpochMs)
+                    .apply("(execution_attempt is null or max_retry_count is null or execution_attempt < max_retry_count)"));
+            if (updated == 1 && action.getPlanId() != null && !action.getPlanId().isBlank()) {
+                planIds.add(action.getPlanId());
+            }
+        }
+
+        return planIds.stream()
+                .map(this::findById)
+                .flatMap(Optional::stream)
+                .toList();
+    }
+
     public boolean tryLockAction(String actionId, String lockedBy, OffsetDateTime now) {
         long nowEpochMs = now.toInstant().toEpochMilli();
         long expiredBefore = nowEpochMs - DISPATCH_LOCK_TIMEOUT_MS;
