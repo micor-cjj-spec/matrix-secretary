@@ -59,6 +59,12 @@ public class SkillCatalog {
         view.put("riskLevel", skill.riskLevel());
         view.put("requiresConfirmation", skill.requiresConfirmation());
         view.put("inputSchema", skill.inputSchema());
+        view.put("retry", Map.of(
+                "maxRetryCount", skill.retry().maxRetryCount(),
+                "initialBackoffSeconds", skill.retry().initialBackoffSeconds(),
+                "maxBackoffSeconds", skill.retry().maxBackoffSeconds(),
+                "runningTimeoutMinutes", skill.retry().runningTimeoutMinutes()
+        ));
         return view;
     }
 
@@ -98,6 +104,10 @@ public class SkillCatalog {
         SkillExecution execution = executionRaw instanceof Map<?, ?> executionMap
                 ? toSkillExecution((Map<String, Object>) executionMap)
                 : new SkillExecution("noop", null, null, null, Map.of(), Map.of(), Map.of());
+        Object retryRaw = raw.get("retry");
+        SkillRetryPolicy retry = retryRaw instanceof Map<?, ?> retryMap
+                ? toSkillRetryPolicy((Map<String, Object>) retryMap)
+                : SkillRetryPolicy.defaults();
 
         return new SkillDefinition(
                 name,
@@ -108,7 +118,8 @@ public class SkillCatalog {
                 defaultString(raw.get("riskLevel"), "LOW"),
                 booleanValue(raw.get("requiresConfirmation")),
                 mapValue(raw.get("inputSchema")),
-                execution
+                execution,
+                retry
         );
     }
 
@@ -121,6 +132,15 @@ public class SkillCatalog {
                 stringMap(raw.get("headers")),
                 mapValue(raw.get("query")),
                 mapValue(raw.get("body"))
+        );
+    }
+
+    private SkillRetryPolicy toSkillRetryPolicy(Map<String, Object> raw) {
+        return new SkillRetryPolicy(
+                intValue(raw.get("maxRetryCount")),
+                intValue(raw.get("initialBackoffSeconds")),
+                intValue(raw.get("maxBackoffSeconds")),
+                intValue(raw.get("runningTimeoutMinutes"))
         );
     }
 
@@ -142,6 +162,20 @@ public class SkillCatalog {
 
     private static String stringValue(Object value) {
         return value == null ? null : String.valueOf(value);
+    }
+
+    private static Integer intValue(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private static Boolean booleanValue(Object value) {
