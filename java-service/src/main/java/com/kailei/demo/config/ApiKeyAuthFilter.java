@@ -22,17 +22,24 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final String apiKey;
+    private final boolean authRequired;
     private final ObjectMapper objectMapper;
 
     public ApiKeyAuthFilter(@Value("${ai-secretary.api-key:}") String apiKey,
+                            @Value("${ai-secretary.auth.required:false}") boolean authRequired,
                             ObjectMapper objectMapper) {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
+        this.authRequired = authRequired;
         this.objectMapper = objectMapper;
+
+        if (this.authRequired && this.apiKey.isBlank()) {
+            throw new IllegalStateException("生产鉴权已开启，但 AI_SECRETARY_API_KEY 未配置");
+        }
     }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        if (apiKey.isBlank()) {
+        if (apiKey.isBlank() && !authRequired) {
             return true;
         }
         String path = request.getRequestURI();
