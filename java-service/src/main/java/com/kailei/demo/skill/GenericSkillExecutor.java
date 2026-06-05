@@ -11,6 +11,7 @@ import com.kailei.demo.repository.NotificationRepository;
 import com.kailei.demo.service.EmailSandboxService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -30,19 +31,22 @@ public class GenericSkillExecutor {
     private final EmailDraftRepository emailDraftRepository;
     private final EmailSandboxService emailSandboxService;
     private final ChannelMessageExecutor channelMessageExecutor;
+    private final boolean httpSkillEnabled;
 
     public GenericSkillExecutor(RestClient restClient,
                                 ObjectMapper objectMapper,
                                 NotificationRepository notificationRepository,
                                 EmailDraftRepository emailDraftRepository,
                                 EmailSandboxService emailSandboxService,
-                                ChannelMessageExecutor channelMessageExecutor) {
+                                ChannelMessageExecutor channelMessageExecutor,
+                                @Value("${ai-secretary.http-skill.enabled:false}") boolean httpSkillEnabled) {
         this.restClient = restClient;
         this.renderer = new SkillTemplateRenderer(objectMapper);
         this.notificationRepository = notificationRepository;
         this.emailDraftRepository = emailDraftRepository;
         this.emailSandboxService = emailSandboxService;
         this.channelMessageExecutor = channelMessageExecutor;
+        this.httpSkillEnabled = httpSkillEnabled;
     }
 
     public TaskAction execute(String planId, String userId, SkillDefinition skill, TaskAction action) {
@@ -54,7 +58,15 @@ public class GenericSkillExecutor {
         String type = skill.execution().type();
         return switch (type) {
             case "builtin" -> executeBuiltin(planId, userId, skill, action);
-            case "http" -> executeHttp(skill, action);
+            case "http" -> {
+                if (!httpSkillEnabled) {
+                    yield action.withStatus(
+                            TaskStatus.FAILED_FINAL,
+                            "HTTP Skill 默认关闭；如需启用，请先配置 URL 白名单、内网地址拦截和超时策略"
+                    );
+                }
+                yield executeHttp(skill, action);
+            }
             case "prompt" -> action.withStatus(TaskStatus.EXECUTED, "已生成文本型任务: " + action.content());
             case "noop" -> action.withStatus(TaskStatus.EXECUTED, "已记录任务，等待人工处理: " + action.content());
             default -> action.withStatus(TaskStatus.FAILED_FINAL, "不支持的 Skill 执行类型: " + type);
