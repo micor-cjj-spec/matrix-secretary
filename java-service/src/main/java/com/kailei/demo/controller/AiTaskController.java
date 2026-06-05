@@ -89,13 +89,13 @@ public class AiTaskController {
 
     @GetMapping("/{planId}")
     public TaskPlan get(@PathVariable String planId,
-                        @RequestParam(required = false) String userId) {
+                        @RequestParam String userId) {
         return aiTaskService.get(planId, userId);
     }
 
     @GetMapping("/{planId}/logs")
     public List<TaskExecutionLogEntity> logs(@PathVariable String planId,
-                                             @RequestParam(required = false) String userId) {
+                                             @RequestParam String userId) {
         aiTaskService.get(planId, userId);
         return executionLogRepository.findByPlanId(planId);
     }
@@ -103,25 +103,25 @@ public class AiTaskController {
     @GetMapping("/{planId}/actions/{actionId}/logs")
     public List<TaskExecutionLogEntity> actionLogs(@PathVariable String planId,
                                                    @PathVariable String actionId,
-                                                   @RequestParam(required = false) String userId) {
+                                                   @RequestParam String userId) {
         aiTaskService.get(planId, userId);
         return executionLogRepository.findByPlanIdAndActionId(planId, actionId);
     }
 
     @GetMapping("/sessions/{sessionId}")
     public SessionState getSession(@PathVariable String sessionId,
-                                   @RequestParam(required = false) String userId) {
+                                   @RequestParam String userId) {
         return aiTaskService.getSession(sessionId, userId);
     }
 
     @GetMapping("/sessions/{sessionId}/plans")
     public List<TaskPlan> listSessionPlans(@PathVariable String sessionId,
-                                           @RequestParam(required = false) String userId) {
+                                           @RequestParam String userId) {
         return aiTaskService.listBySession(sessionId, userId);
     }
 
     @GetMapping
-    public List<TaskPlan> list(@RequestParam(required = false) String userId) {
+    public List<TaskPlan> list(@RequestParam String userId) {
         return aiTaskService.list(userId);
     }
 }
