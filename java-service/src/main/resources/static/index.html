@@ -1,94 +1,315 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI 秘书 Java + Python Demo</title>
+  <title>AI 秘书任务中心</title>
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: Arial, "Microsoft YaHei", sans-serif; background: #f4f6fa; color: #162033; }
-    main { max-width: 1180px; margin: 0 auto; padding: 28px 18px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 540px); gap: 18px; }
-    section { background: #fff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 18px; min-width: 0; }
-    h1 { margin: 0 0 8px; font-size: 22px; }
-    p { margin: 0 0 16px; color: #65758c; line-height: 1.55; }
-    textarea { width: 100%; min-height: 210px; resize: vertical; border: 1px solid #c9d4e5; border-radius: 6px; padding: 13px; font-size: 15px; line-height: 1.65; }
-    button { border: 0; border-radius: 6px; background: #1d4ed8; color: #fff; padding: 10px 15px; cursor: pointer; font-size: 14px; }
-    button.secondary { background: #e8eefc; color: #1d4ed8; }
-    button:disabled { opacity: .55; cursor: not-allowed; }
-    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
-    .task { border: 1px solid #dbe3ef; background: #fbfcff; border-radius: 8px; padding: 13px; margin-bottom: 12px; }
-    .task h2 { margin: 0 0 10px; font-size: 16px; }
-    .warning { border: 1px solid #f2c97d; background: #fff8e6; color: #7a4b00; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px; line-height: 1.55; }
-    .meta { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 7px 10px; font-size: 13px; line-height: 1.5; }
-    .label { color: #64748b; }
-    .value { color: #0f172a; word-break: break-word; }
-    .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #1d4ed8; font-size: 12px; }
-    .tag.success { background: #ecfdf5; color: #047857; }
-    .tag.warn { background: #fff7ed; color: #c2410c; }
-    .tag.danger { background: #fef2f2; color: #b91c1c; }
-    .expression { font-family: Consolas, Monaco, monospace; background: #f1f5f9; border-radius: 4px; padding: 2px 6px; }
-    .debug-note { color: #64748b; font-size: 12px; line-height: 1.6; margin-top: 10px; }
-    .reminder-popup { position: fixed; right: 24px; bottom: 24px; z-index: 20; width: min(360px, calc(100vw - 32px)); border: 1px solid #bfdbfe; border-radius: 8px; background: #fff; box-shadow: 0 18px 50px rgba(15, 23, 42, .22); padding: 16px; transform: translateY(18px); opacity: 0; pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
-    .reminder-popup.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
-    .reminder-popup h2 { margin: 0 0 8px; font-size: 17px; }
-    .reminder-popup p { margin: 0; color: #334155; }
-    .reminder-popup .popup-time { margin-top: 10px; color: #64748b; font-size: 12px; }
-    .reminder-popup .popup-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
-    @media (max-width: 920px) { main { grid-template-columns: 1fr; } }
+    :root {
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --line: #d8e2ef;
+      --text: #162033;
+      --muted: #667085;
+      --blue: #1d4ed8;
+      --blue-soft: #eef4ff;
+      --green: #047857;
+      --green-soft: #ecfdf3;
+      --amber: #b45309;
+      --amber-soft: #fff7ed;
+      --red: #b42318;
+      --red-soft: #fff1f3;
+      --violet: #5925dc;
+      --violet-soft: #f4f3ff;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+    button, input, textarea { font: inherit; }
+    button {
+      min-height: 36px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: var(--blue);
+      color: #fff;
+      padding: 8px 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button.secondary { background: var(--blue-soft); color: #1849a9; border-color: #c7d7fe; }
+    button.ghost { background: #fff; color: #475467; border-color: var(--line); }
+    button.danger { background: var(--red-soft); color: var(--red); border-color: #fecdd3; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    textarea, input {
+      width: 100%;
+      border: 1px solid #cfd8e7;
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      padding: 9px 10px;
+    }
+    textarea { min-height: 150px; resize: vertical; line-height: 1.6; }
+    .app { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+    header { border-bottom: 1px solid var(--line); background: #fff; }
+    .topbar {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 280px; }
+    .logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: var(--blue);
+      color: #fff;
+      font-weight: 700;
+    }
+    .brand h1 { margin: 0; font-size: 20px; }
+    .brand p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+    .top-actions, .row, .tabs, .action-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .layout {
+      max-width: 1500px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 16px 20px 24px;
+      display: grid;
+      grid-template-columns: 370px minmax(440px, 1fr) 450px;
+      gap: 14px;
+      align-items: start;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      min-width: 0;
+    }
+    .panel-head {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+    .panel-head h2 { margin: 0; font-size: 15px; }
+    .panel-body { padding: 14px; }
+    .stack { display: grid; gap: 12px; }
+    .field { display: grid; gap: 6px; }
+    .field label, .muted { color: var(--muted); }
+    .field label, .small { font-size: 12px; }
+    .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .metric { border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: #fbfcff; }
+    .metric b { display: block; font-size: 22px; margin-bottom: 2px; }
+    .metric span { color: var(--muted); font-size: 12px; }
+    .tab { background: #fff; color: #475467; border-color: var(--line); padding: 7px 10px; }
+    .tab.active { background: var(--blue-soft); color: #1849a9; border-color: #a4bcfd; }
+    .plan-list { display: grid; gap: 8px; max-height: calc(100vh - 190px); overflow: auto; padding-right: 2px; }
+    .plan-item { border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 11px; cursor: pointer; display: grid; gap: 8px; }
+    .plan-item.active { border-color: #84adff; box-shadow: 0 0 0 2px #dbeafe; }
+    .plan-title { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+    .plan-title b { font-size: 14px; line-height: 1.35; }
+    .plan-meta { display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 12px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 12px;
+      line-height: 1;
+      background: #f2f4f7;
+      color: #344054;
+      white-space: nowrap;
+    }
+    .badge.wait { background: var(--amber-soft); color: var(--amber); }
+    .badge.ok { background: var(--green-soft); color: var(--green); }
+    .badge.bad { background: var(--red-soft); color: var(--red); }
+    .badge.info { background: #eff6ff; color: var(--blue); }
+    .badge.review { background: var(--violet-soft); color: var(--violet); }
+    .detail-empty { color: var(--muted); padding: 28px; text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
+    .summary, .action-list, .timeline, .channel-events { display: grid; gap: 8px; }
+    .kv { display: grid; grid-template-columns: 98px minmax(0, 1fr); gap: 8px; font-size: 13px; line-height: 1.5; }
+    .kv .k { color: var(--muted); }
+    .kv .v { word-break: break-word; }
+    .action { border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: grid; gap: 8px; background: #fbfcff; }
+    .action h3 { margin: 0; font-size: 14px; line-height: 1.35; }
+    .timeline { max-height: 280px; overflow: auto; }
+    .log { border-left: 3px solid #cfd8e7; padding: 2px 0 2px 9px; display: grid; gap: 3px; font-size: 12px; }
+    .log b { font-size: 13px; }
+    .log p { margin: 0; color: var(--muted); word-break: break-word; }
+    .channel-events { max-height: 260px; overflow: auto; }
+    .event { border: 1px solid var(--line); border-radius: 6px; padding: 9px; display: grid; gap: 5px; font-size: 12px; background: #fff; }
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      width: min(390px, calc(100vw - 40px));
+      border: 1px solid #c7d7fe;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 16px 44px rgba(16, 24, 40, .2);
+      padding: 14px;
+      display: none;
+      z-index: 30;
+    }
+    .toast.show { display: block; }
+    .toast b { display: block; margin-bottom: 5px; }
+    .mono { font-family: Consolas, Monaco, monospace; }
+    @media (max-width: 1180px) {
+      .layout { grid-template-columns: 340px minmax(0, 1fr); }
+      .right { grid-column: 1 / -1; }
+    }
+    @media (max-width: 760px) {
+      .topbar, .layout { padding-left: 12px; padding-right: 12px; }
+      .layout { grid-template-columns: 1fr; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+    }
   </style>
 </head>
 <body>
-<main>
-  <section>
-    <h1>AI 秘书 Java + Python Demo</h1>
-    <p>Java 负责业务入口、预览确认、状态编排；Python 负责语义识别和任务拆解。</p>
-    <textarea id="input">明天下午三点提醒我给王总发邮件，内容是项目方案已经更新；另外每周五上午十点通知团队群提交周报。收到李雷的消息后回复他：我下午会确认合同。</textarea>
-    <div class="toolbar">
-      <button id="previewBtn">生成任务预览</button>
-      <button id="confirmBtn" class="secondary" disabled>确认并编排</button>
-      <span id="status"></span>
+<div class="app">
+  <header>
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo">AI</div>
+        <div>
+          <h1>AI 秘书任务中心</h1>
+          <p>任务创建、确认编排、定时执行、渠道回执和异常处理</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" id="refreshBtn" type="button">刷新</button>
+        <button class="secondary" id="openEventsBtn" type="button">查看渠道事件</button>
+      </div>
     </div>
-  </section>
-  <section>
-    <h1>任务计划</h1>
-    <div id="tasks"></div>
-    <div class="debug-note">页面仅展示中文业务信息；后端原始字段已在前端做中文转换。</div>
-  </section>
-</main>
-<div id="reminderPopup" class="reminder-popup" role="alert" aria-live="assertive" aria-hidden="true">
-  <h2>提醒事项</h2>
-  <p id="reminderPopupContent"></p>
-  <div id="reminderPopupTime" class="popup-time"></div>
-  <div class="popup-actions">
-    <button id="reminderPopupClose" class="secondary" type="button">知道了</button>
-  </div>
-</div>
-<script>
-  const input = document.querySelector("#input");
-  const tasksEl = document.querySelector("#tasks");
-  const statusEl = document.querySelector("#status");
-  const confirmBtn = document.querySelector("#confirmBtn");
-  const reminderPopup = document.querySelector("#reminderPopup");
-  const reminderPopupContent = document.querySelector("#reminderPopupContent");
-  const reminderPopupTime = document.querySelector("#reminderPopupTime");
-  const reminderPopupClose = document.querySelector("#reminderPopupClose");
-  let currentPlanId = null;
-  let reminderPollStarted = false;
-  let reminderPollReady = false;
-  let reminderPopupTimer = null;
-  const REMINDER_NOTIFIED_KEY = "aiSecretary.notifiedReminderActionIds";
-  const notifiedReminderIds = loadNotifiedReminderIds();
+  </header>
+  <main class="layout">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>创建任务</h2>
+        <span class="badge info">网页入口</span>
+      </div>
+      <div class="panel-body stack">
+        <div class="field">
+          <label for="userIdInput">用户标识</label>
+          <input id="userIdInput" value="demo-user" />
+        </div>
+        <div class="field">
+          <label for="taskInput">自然语言指令</label>
+          <textarea id="taskInput">1分钟后提醒我喝水</textarea>
+        </div>
+        <div class="row">
+          <button id="previewBtn" type="button">生成预览</button>
+          <button id="confirmBtn" class="secondary" type="button" disabled>确认并编排</button>
+        </div>
+        <div id="statusText" class="small muted">等待操作</div>
+        <div class="metrics" id="metrics"></div>
+      </div>
+    </section>
 
-  const ACTION_TYPE_TEXT = {
-    reply_message: "回复消息",
-    send_message: "发送消息",
-    send_email: "发送邮件",
+    <section class="panel">
+      <div class="panel-head">
+        <h2>任务看板</h2>
+        <div class="tabs" id="statusTabs"></div>
+      </div>
+      <div class="panel-body">
+        <div class="plan-list" id="planList"></div>
+      </div>
+    </section>
+
+    <section class="panel right">
+      <div class="panel-head">
+        <h2>操作闭环</h2>
+        <span id="selectedBadge" class="badge">未选择</span>
+      </div>
+      <div class="panel-body stack">
+        <div id="detail"></div>
+        <div>
+          <div class="panel-head" style="padding:0 0 9px;border-bottom:0;">
+            <h2>执行日志</h2>
+            <button id="reloadLogsBtn" class="ghost" type="button" disabled>刷新日志</button>
+          </div>
+          <div class="timeline" id="logs"></div>
+        </div>
+        <div>
+          <div class="panel-head" style="padding:0 0 9px;border-bottom:0;">
+            <h2>渠道事件</h2>
+            <button id="reloadEventsBtn" class="ghost" type="button">刷新事件</button>
+          </div>
+          <div class="channel-events" id="channelEvents"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast" role="alert" aria-live="assertive">
+  <b id="toastTitle">提醒已执行</b>
+  <div id="toastBody" class="small"></div>
+</div>
+
+<script>
+  const API = "/api/task-center";
+  const state = {
+    plans: [],
+    events: [],
+    logs: [],
+    selectedPlanId: null,
+    previewPlanId: null,
+    filter: "ALL",
+    notified: new Set(JSON.parse(localStorage.getItem("aiSecretary.notifiedReminderActions") || "[]"))
+  };
+  const els = {
+    userIdInput: document.querySelector("#userIdInput"),
+    taskInput: document.querySelector("#taskInput"),
+    previewBtn: document.querySelector("#previewBtn"),
+    confirmBtn: document.querySelector("#confirmBtn"),
+    refreshBtn: document.querySelector("#refreshBtn"),
+    openEventsBtn: document.querySelector("#openEventsBtn"),
+    reloadLogsBtn: document.querySelector("#reloadLogsBtn"),
+    reloadEventsBtn: document.querySelector("#reloadEventsBtn"),
+    statusText: document.querySelector("#statusText"),
+    metrics: document.querySelector("#metrics"),
+    statusTabs: document.querySelector("#statusTabs"),
+    planList: document.querySelector("#planList"),
+    detail: document.querySelector("#detail"),
+    selectedBadge: document.querySelector("#selectedBadge"),
+    logs: document.querySelector("#logs"),
+    channelEvents: document.querySelector("#channelEvents"),
+    toast: document.querySelector("#toast"),
+    toastTitle: document.querySelector("#toastTitle"),
+    toastBody: document.querySelector("#toastBody")
+  };
+
+  const statusText = {
+    WAITING_CONFIRM: "等待确认",
+    CONFIRMED: "已确认",
+    SCHEDULED: "已调度",
+    EXECUTED: "已执行",
+    FAILED: "执行失败",
+    FAILED_FINAL: "最终失败",
+    NEEDS_MANUAL_REVIEW: "待人工处理",
+    CANCELLED: "已取消"
+  };
+  const actionTypeText = {
     reminder: "提醒事项",
+    send_message: "发送消息",
+    reply_message: "回复消息",
+    send_email: "发送邮件",
     create_todo: "创建待办",
     schedule_task: "定时任务"
   };
-
-  const TARGET_TYPE_TEXT = {
+  const targetTypeText = {
     user: "用户",
     group: "群组",
     email: "邮箱",
@@ -96,299 +317,497 @@
     self: "本人",
     unknown: "未识别"
   };
-
-  const STATUS_TEXT = {
-    WAITING_CONFIRM: "等待确认",
-    CONFIRMED: "已确认",
-    EXECUTED: "已执行",
-    SCHEDULED: "已调度",
-    FAILED: "执行失败"
-  };
-
-  const SCHEDULE_TYPE_TEXT = {
+  const scheduleTypeText = {
     none: "无需定时",
     once: "一次性任务",
     recurring: "周期任务"
   };
+  const priorityText = { low: "低", normal: "普通", high: "高" };
+  const riskText = { LOW: "低风险", MEDIUM: "中风险", HIGH: "高风险" };
+  const eventStatusText = { RECEIVED: "已接收", PROCESSING: "处理中", PROCESSED: "已处理", FAILED: "处理失败" };
+  const statusGroups = [
+    ["ALL", "全部"],
+    ["WAITING_CONFIRM", "待确认"],
+    ["SCHEDULED", "已调度"],
+    ["EXECUTED", "已执行"],
+    ["FAILED", "失败"],
+    ["NEEDS_MANUAL_REVIEW", "人工处理"]
+  ];
 
-  const PRIORITY_TEXT = {
-    low: "低",
-    normal: "普通",
-    high: "高"
-  };
+  els.previewBtn.addEventListener("click", preview);
+  els.confirmBtn.addEventListener("click", () => confirmPlan(state.previewPlanId));
+  els.refreshBtn.addEventListener("click", refreshAll);
+  els.reloadLogsBtn.addEventListener("click", loadLogs);
+  els.reloadEventsBtn.addEventListener("click", loadEvents);
+  els.openEventsBtn.addEventListener("click", () => {
+    loadEvents();
+    els.channelEvents.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+  els.userIdInput.addEventListener("change", () => {
+    state.selectedPlanId = null;
+    state.previewPlanId = null;
+    els.confirmBtn.disabled = true;
+    refreshAll();
+  });
 
-  const ENUM_TEXT_REPLACEMENTS = {
-    reply_message: "回复消息",
-    send_message: "发送消息",
-    send_email: "发送邮件",
-    reminder: "提醒事项",
-    create_todo: "创建待办",
-    schedule_task: "定时任务",
-    user: "用户",
-    group: "群组",
-    email: "邮箱",
-    dynamic: "动态对象",
-    self: "本人",
-    unknown: "未识别",
-    none: "无需定时",
-    once: "一次性任务",
-    recurring: "周期任务",
-    low: "低",
-    normal: "普通",
-    high: "高",
-    WAITING_CONFIRM: "等待确认",
-    CONFIRMED: "已确认",
-    EXECUTED: "已执行",
-    SCHEDULED: "已调度",
-    FAILED: "执行失败"
-  };
+  start();
 
-  document.querySelector("#previewBtn").addEventListener("click", preview);
-  confirmBtn.addEventListener("click", confirmPlan);
-  reminderPopupClose.addEventListener("click", hideReminderPopup);
-  startReminderPolling();
+  async function start() {
+    renderTabs();
+    await refreshAll();
+    setInterval(refreshSoft, 6000);
+  }
+
+  async function refreshAll() {
+    await Promise.all([loadPlans(), loadEvents()]);
+    if (state.selectedPlanId) await loadLogs();
+  }
+
+  async function refreshSoft() {
+    const before = new Map(state.plans.flatMap(plan => (plan.tasks || []).map(action => [action.actionId, action.status])));
+    await loadPlans(false);
+    notifyExecutedReminders(before);
+    if (state.selectedPlanId) await loadLogs(false);
+    await loadEvents(false);
+  }
 
   async function preview() {
-    statusEl.textContent = "解析中...";
-    const res = await fetch("/api/ai-task/preview", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ text: input.value, timezone: "Asia/Shanghai", userId: "demo-user" })
-    });
-    const data = await res.json();
-    currentPlanId = data.planId;
-    confirmBtn.disabled = !currentPlanId;
-    statusEl.textContent = `状态：${formatStatus(data.status)}`;
-    render(data);
+    try {
+      setStatus("正在解析任务...");
+      const plan = await request(`${API}/plans/preview`, {
+        method: "POST",
+        body: { text: els.taskInput.value, timezone: "Asia/Shanghai", userId: currentUserId() }
+      });
+      state.previewPlanId = plan.planId;
+      state.selectedPlanId = plan.planId;
+      els.confirmBtn.disabled = false;
+      setStatus(`预览已生成：${plan.planId}`);
+      await loadPlans();
+      selectPlan(plan.planId);
+    } catch (err) {
+      showError(err);
+    }
   }
 
-  async function confirmPlan() {
-    statusEl.textContent = "编排中...";
-    const res = await fetch(`/api/ai-task/${currentPlanId}/confirm`, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ operatorUserId: "demo-user" })
-    });
-    const data = await res.json();
-    statusEl.textContent = `已执行：${data.executionSummary.executed}，已调度：${data.executionSummary.scheduled}，失败：${data.executionSummary.failed}`;
-    render(data.plan);
-    reminderPollReady = true;
+  async function confirmPlan(planId) {
+    if (!planId) return;
+    try {
+      setStatus("正在确认并编排...");
+      const res = await request(`${API}/plans/${encodeURIComponent(planId)}/confirm`, {
+        method: "POST",
+        body: { operatorUserId: currentUserId() }
+      });
+      state.previewPlanId = null;
+      els.confirmBtn.disabled = true;
+      const summary = res.executionSummary || {};
+      setStatus(`已执行 ${summary.executed || 0}，已调度 ${summary.scheduled || 0}，失败 ${summary.failed || 0}`);
+      await loadPlans();
+      selectPlan(planId);
+    } catch (err) {
+      showError(err);
+    }
   }
 
-  function render(plan) {
-    const warnings = (plan.warnings || []).map(item => `<div>${escapeHtml(item)}</div>`).join("");
-    const warningHtml = warnings ? `<div class="warning">${warnings}</div>` : "";
-    const taskHtml = (plan.tasks || []).map(task => `
-      <div class="task">
-        <h2>${escapeHtml(task.title)}</h2>
-        <div class="meta">
-          <div class="label">动作类型</div><div class="value"><span class="tag">${formatActionType(readField(task, "actionType", "action_type"))}</span></div>
-          <div class="label">对象</div><div class="value">${escapeHtml(readTargetName(task.target))}</div>
-          <div class="label">对象类型</div><div class="value">${formatTargetType(readField(task.target, "targetType", "target_type"))}</div>
-          <div class="label">计划类型</div><div class="value">${formatScheduleType(readField(task.schedule, "scheduleType", "schedule_type"))}</div>
-          <div class="label">计划时间</div><div class="value">${formatScheduleText(task.schedule)}</div>
-          ${renderCron(task.schedule)}
-          <div class="label">优先级</div><div class="value">${formatPriority(readField(task, "priority"))}</div>
-          <div class="label">置信度</div><div class="value">${formatConfidence(task.confidence)}</div>
-          <div class="label">状态</div><div class="value">${formatStatusTag(readField(task, "status"))}</div>
-          <div class="label">内容</div><div class="value">${escapeHtml(task.content || "")}</div>
-          <div class="label">解析备注</div><div class="value">${escapeHtml(task.analysisNote || "")}</div>
-          <div class="label">说明</div><div class="value">${formatExecutionNote(task.executionNote || "")}</div>
+  async function cancelPlan(planId) {
+    await request(`${API}/plans/${encodeURIComponent(planId)}/cancel`, {
+      method: "POST",
+      body: { operatorUserId: currentUserId(), reason: "在任务中心取消" }
+    });
+    await loadPlans();
+    selectPlan(planId);
+  }
+
+  async function retryAction(planId, actionId) {
+    await request(`${API}/plans/${encodeURIComponent(planId)}/actions/${encodeURIComponent(actionId)}/retry`, {
+      method: "POST",
+      body: { operatorUserId: currentUserId() }
+    });
+    await loadPlans();
+    selectPlan(planId);
+  }
+
+  async function resolveManual(planId, actionId) {
+    await request(`${API}/plans/${encodeURIComponent(planId)}/actions/${encodeURIComponent(actionId)}/manual-resolve`, {
+      method: "POST",
+      body: { operatorUserId: currentUserId(), note: "已在任务中心人工处理" }
+    });
+    await loadPlans();
+    selectPlan(planId);
+  }
+
+  async function reopenFinal(planId, actionId) {
+    await request(`${API}/plans/${encodeURIComponent(planId)}/actions/${encodeURIComponent(actionId)}/reopen-final-failure`, {
+      method: "POST",
+      body: { operatorUserId: currentUserId(), reason: "在任务中心重新打开" }
+    });
+    await loadPlans();
+    selectPlan(planId);
+  }
+
+  async function loadPlans(renderNow = true) {
+    try {
+      state.plans = await request(`${API}/plans?userId=${encodeURIComponent(currentUserId())}`);
+      if (!state.selectedPlanId && state.plans.length) state.selectedPlanId = state.plans[0].planId;
+      if (renderNow) renderAll();
+    } catch (err) {
+      state.plans = [];
+      showError(err);
+      renderAll();
+    }
+  }
+
+  async function loadLogs(renderNow = true) {
+    if (!state.selectedPlanId) return;
+    try {
+      state.logs = await request(`${API}/plans/${encodeURIComponent(state.selectedPlanId)}/logs?userId=${encodeURIComponent(currentUserId())}`);
+      if (renderNow) renderLogs();
+    } catch (err) {
+      state.logs = [];
+      showError(err);
+      renderLogs();
+    }
+  }
+
+  async function loadEvents(renderNow = true) {
+    try {
+      state.events = await request(`${API}/channel-events?limit=20`);
+      if (renderNow) renderEvents();
+    } catch (err) {
+      state.events = [];
+      showError(err);
+      renderEvents();
+    }
+  }
+
+  function selectPlan(planId) {
+    state.selectedPlanId = planId;
+    renderAll();
+    loadLogs();
+  }
+
+  function renderAll() {
+    renderMetrics();
+    renderTabs();
+    renderPlanList();
+    renderDetail();
+    renderLogs();
+    renderEvents();
+  }
+
+  function renderMetrics() {
+    const actions = state.plans.flatMap(plan => plan.tasks || []);
+    els.metrics.innerHTML = [
+      metric(state.plans.length, "任务计划"),
+      metric(actions.length, "动作明细"),
+      metric(actions.filter(a => a.status === "SCHEDULED").length, "等待触发"),
+      metric(actions.filter(a => ["FAILED", "FAILED_FINAL", "NEEDS_MANUAL_REVIEW"].includes(a.status)).length, "异常待办")
+    ].join("");
+  }
+
+  function renderTabs() {
+    els.statusTabs.innerHTML = statusGroups.map(([key, label]) => {
+      const count = key === "ALL" ? state.plans.length : state.plans.filter(plan => plan.status === key).length;
+      return `<button class="tab ${state.filter === key ? "active" : ""}" data-filter="${key}" type="button">${label} ${count}</button>`;
+    }).join("");
+    els.statusTabs.querySelectorAll("button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.filter = btn.dataset.filter;
+        renderTabs();
+        renderPlanList();
+      });
+    });
+  }
+
+  function renderPlanList() {
+    const plans = filteredPlans();
+    if (!plans.length) {
+      els.planList.innerHTML = `<div class="detail-empty">当前分组没有任务</div>`;
+      return;
+    }
+    els.planList.innerHTML = plans.map(plan => {
+      const first = (plan.tasks || [])[0] || {};
+      return `
+        <div class="plan-item ${plan.planId === state.selectedPlanId ? "active" : ""}" data-plan-id="${escapeHtml(plan.planId)}">
+          <div class="plan-title">
+            <b>${escapeHtml(first.title || first.content || short(plan.sourceText, 38) || plan.planId)}</b>
+            ${badge(plan.status)}
+          </div>
+          <div class="plan-meta">
+            <span>${channelLabel(plan.userId)}</span>
+            <span>${escapeHtml(plan.planId)}</span>
+            <span>${formatDate(plan.updatedAt || plan.createdAt)}</span>
+          </div>
+        </div>`;
+    }).join("");
+    els.planList.querySelectorAll(".plan-item").forEach(item => {
+      item.addEventListener("click", () => selectPlan(item.dataset.planId));
+    });
+  }
+
+  function renderDetail() {
+    const plan = currentPlan();
+    if (!plan) {
+      els.selectedBadge.outerHTML = `<span id="selectedBadge" class="badge">未选择</span>`;
+      els.selectedBadge = document.querySelector("#selectedBadge");
+      els.detail.innerHTML = `<div class="detail-empty">选择一个任务查看操作闭环</div>`;
+      els.reloadLogsBtn.disabled = true;
+      return;
+    }
+    els.selectedBadge.outerHTML = badge(plan.status, "selectedBadge");
+    els.selectedBadge = document.querySelector("#selectedBadge");
+    const warnings = (plan.warnings || []).map(warning => `<div class="kv"><div class="k">解析提示</div><div class="v">${escapeHtml(displayText(warning))}</div></div>`).join("");
+    els.detail.innerHTML = `
+      <div class="summary">
+        <div class="kv"><div class="k">计划编号</div><div class="v mono">${escapeHtml(plan.planId)}</div></div>
+        <div class="kv"><div class="k">来源渠道</div><div class="v">${channelLabel(plan.userId)}</div></div>
+        <div class="kv"><div class="k">会话编号</div><div class="v mono">${escapeHtml(plan.sessionId || "-")}</div></div>
+        <div class="kv"><div class="k">原始指令</div><div class="v">${escapeHtml(plan.sourceText || "-")}</div></div>
+        ${warnings}
+        <div class="row">
+          <button class="secondary" type="button" data-confirm="${escapeHtml(plan.planId)}" ${plan.status !== "WAITING_CONFIRM" ? "disabled" : ""}>确认并编排</button>
+          <button class="danger" type="button" data-cancel="${escapeHtml(plan.planId)}" ${["EXECUTED", "CANCELLED"].includes(plan.status) ? "disabled" : ""}>取消任务</button>
         </div>
       </div>
-    `).join("");
-    const emptyHtml = taskHtml ? "" : `<div class="warning">没有生成可执行任务，请查看解析警告或检查模型配置。</div>`;
-    tasksEl.innerHTML = warningHtml + taskHtml + emptyHtml;
+      <div class="action-list">${(plan.tasks || []).map(action => renderAction(plan, action)).join("")}</div>`;
+    els.detail.querySelectorAll("[data-confirm]").forEach(btn => btn.addEventListener("click", () => confirmPlan(btn.dataset.confirm)));
+    els.detail.querySelectorAll("[data-cancel]").forEach(btn => btn.addEventListener("click", () => runCommand(() => cancelPlan(btn.dataset.cancel))));
+    els.detail.querySelectorAll("[data-retry]").forEach(btn => btn.addEventListener("click", () => runCommand(() => retryAction(plan.planId, btn.dataset.retry))));
+    els.detail.querySelectorAll("[data-resolve]").forEach(btn => btn.addEventListener("click", () => runCommand(() => resolveManual(plan.planId, btn.dataset.resolve))));
+    els.detail.querySelectorAll("[data-reopen]").forEach(btn => btn.addEventListener("click", () => runCommand(() => reopenFinal(plan.planId, btn.dataset.reopen))));
+    els.reloadLogsBtn.disabled = false;
   }
 
-  function renderCron(schedule) {
-    if (!shouldShowCron(schedule)) return "";
-    const cron = readField(schedule, "cron");
+  function renderAction(plan, action) {
+    const schedule = action.schedule || {};
+    const target = action.target || {};
+    const runTime = schedule.effectiveRunAt || schedule.nextRunAt || schedule.runAt || schedule.originalText || "-";
     return `
-      <div class="label">Cron 表达式</div>
-      <div class="value">${cron ? `<span class="expression">${escapeHtml(cron)}</span>` : "未生成"}</div>
-    `;
+      <div class="action">
+        <div class="plan-title">
+          <h3>${escapeHtml(action.title || action.content || action.actionId)}</h3>
+          ${badge(action.status)}
+        </div>
+        <div class="kv"><div class="k">动作类型</div><div class="v">${formatActionType(action.actionType)}</div></div>
+        <div class="kv"><div class="k">对象</div><div class="v">${escapeHtml(target.name || target.address || "未指定")}（${formatTargetType(target.targetType)}）</div></div>
+        <div class="kv"><div class="k">计划类型</div><div class="v">${formatScheduleType(schedule.scheduleType)}</div></div>
+        <div class="kv"><div class="k">计划时间</div><div class="v">${escapeHtml(runTime)}</div></div>
+        <div class="kv"><div class="k">Cron 表达式</div><div class="v mono">${escapeHtml(schedule.cron || "未生成")}</div></div>
+        <div class="kv"><div class="k">优先级</div><div class="v">${formatPriority(action.priority)}</div></div>
+        <div class="kv"><div class="k">风险等级</div><div class="v">${formatRisk(action.riskLevel)}</div></div>
+        <div class="kv"><div class="k">置信度</div><div class="v">${formatConfidence(action.confidence)}</div></div>
+        <div class="kv"><div class="k">内容</div><div class="v">${escapeHtml(action.content || "-")}</div></div>
+        <div class="kv"><div class="k">解析备注</div><div class="v">${escapeHtml(displayText(action.analysisNote || "-"))}</div></div>
+        <div class="kv"><div class="k">执行说明</div><div class="v">${escapeHtml(displayText(action.executionNote || "-"))}</div></div>
+        <div class="action-tools">
+          <button class="ghost" type="button" data-retry="${escapeHtml(action.actionId)}" ${action.status !== "FAILED" ? "disabled" : ""}>重试</button>
+          <button class="ghost" type="button" data-resolve="${escapeHtml(action.actionId)}" ${action.status !== "NEEDS_MANUAL_REVIEW" ? "disabled" : ""}>人工完成</button>
+          <button class="ghost" type="button" data-reopen="${escapeHtml(action.actionId)}" ${action.status !== "FAILED_FINAL" ? "disabled" : ""}>重新打开</button>
+        </div>
+      </div>`;
   }
 
-  function formatActionType(value) {
-    return ACTION_TYPE_TEXT[normalizeEnum(value)] || "未知动作";
+  function renderLogs() {
+    if (!state.selectedPlanId || !state.logs.length) {
+      els.logs.innerHTML = `<div class="detail-empty">暂无执行日志</div>`;
+      return;
+    }
+    els.logs.innerHTML = state.logs.map(log => `
+      <div class="log">
+        <b>${formatStatus(log.status)} · ${formatActionType(log.skillName || log.actionType)}</b>
+        <p>${formatDate(log.createdAt)} · ${escapeHtml(log.actionId || "-")}</p>
+        ${log.errorMessage ? `<p style="color:var(--red)">${escapeHtml(displayText(log.errorMessage))}</p>` : ""}
+      </div>`).join("");
   }
 
-  function formatTargetType(value) {
-    return TARGET_TYPE_TEXT[normalizeEnum(value)] || "未识别";
+  function renderEvents() {
+    if (!state.events.length) {
+      els.channelEvents.innerHTML = `<div class="detail-empty">暂无渠道事件</div>`;
+      return;
+    }
+    els.channelEvents.innerHTML = state.events.map(event => `
+      <div class="event">
+        <div class="row">${eventBadge(event.status)}<b>${formatPlatform(event.platform)}</b><span class="muted">${formatDate(event.createdAt)}</span></div>
+        <div class="mono">${escapeHtml(event.eventId || "-")}</div>
+        <div class="muted">会话：${escapeHtml(event.conversationId || "-")}</div>
+        <div class="muted">消息：${escapeHtml(event.messageId || "-")}</div>
+        ${event.errorMessage ? `<div style="color:var(--red)">${escapeHtml(displayText(event.errorMessage))}</div>` : ""}
+      </div>`).join("");
+  }
+
+  function notifyExecutedReminders(before) {
+    state.plans.flatMap(plan => (plan.tasks || []).map(action => ({ plan, action }))).forEach(({ plan, action }) => {
+      if (action.actionType !== "reminder" || action.status !== "EXECUTED" || state.notified.has(action.actionId)) return;
+      const oldStatus = before.get(action.actionId);
+      if (oldStatus && oldStatus !== "EXECUTED") {
+        state.notified.add(action.actionId);
+        localStorage.setItem("aiSecretary.notifiedReminderActions", JSON.stringify([...state.notified].slice(-300)));
+        showToast("提醒已执行", action.content || action.title || plan.planId);
+      }
+    });
+  }
+
+  async function runCommand(command) {
+    try {
+      await command();
+      setStatus("操作已完成");
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function request(url, options = {}) {
+    const init = { method: options.method || "GET", headers: { "Content-Type": "application/json" } };
+    if (options.body) init.body = JSON.stringify(options.body);
+    const res = await fetch(url, init);
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new Error((data && (data.message || data.error)) || text || res.statusText);
+    return data;
+  }
+
+  function filteredPlans() {
+    const plans = [...state.plans].sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
+    return state.filter === "ALL" ? plans : plans.filter(plan => plan.status === state.filter);
+  }
+
+  function currentPlan() {
+    return state.plans.find(plan => plan.planId === state.selectedPlanId);
+  }
+
+  function metric(value, label) {
+    return `<div class="metric"><b>${value}</b><span>${label}</span></div>`;
+  }
+
+  function badge(status, id) {
+    return `<span ${id ? `id="${id}"` : ""} class="badge ${statusClass(status)}">${formatStatus(status)}</span>`;
+  }
+
+  function eventBadge(status) {
+    const text = eventStatusText[status] || "未知状态";
+    const cls = status === "PROCESSED" ? "ok" : status === "FAILED" ? "bad" : "wait";
+    return `<span class="badge ${cls}">${text}</span>`;
+  }
+
+  function statusClass(status) {
+    if (["EXECUTED", "CONFIRMED"].includes(status)) return "ok";
+    if (["WAITING_CONFIRM", "SCHEDULED"].includes(status)) return "wait";
+    if (["FAILED", "FAILED_FINAL"].includes(status)) return "bad";
+    if (status === "NEEDS_MANUAL_REVIEW") return "review";
+    return "info";
   }
 
   function formatStatus(value) {
-    return STATUS_TEXT[normalizeStatus(value)] || "未知状态";
+    return statusText[value] || "未知状态";
   }
 
-  function formatStatusTag(value) {
-    const text = formatStatus(value);
-    const status = normalizeStatus(value);
-    let className = "tag";
-    if (status === "EXECUTED" || status === "CONFIRMED") className += " success";
-    if (status === "SCHEDULED" || status === "WAITING_CONFIRM") className += " warn";
-    if (status === "FAILED") className += " danger";
-    return `<span class="${className}">${text}</span>`;
+  function formatActionType(value) {
+    return actionTypeText[String(value || "").toLowerCase()] || "未知动作";
+  }
+
+  function formatTargetType(value) {
+    return targetTypeText[String(value || "").toLowerCase()] || "未识别";
   }
 
   function formatScheduleType(value) {
-    return SCHEDULE_TYPE_TEXT[normalizeEnum(value)] || "无需定时";
-  }
-
-  function formatScheduleText(schedule) {
-    if (!schedule) return "立即执行或等待人工确认";
-    const parts = [];
-    const originalText = readField(schedule, "originalText", "original_text");
-    const runAt = readField(schedule, "runAt", "run_at");
-    const nextRunAt = readField(schedule, "nextRunAt", "next_run_at");
-    const lastRunAt = readField(schedule, "lastRunAt", "last_run_at");
-    if (originalText) parts.push(originalText);
-    if (runAt) parts.push(`执行时间：${formatDateTime(runAt)}`);
-    if (nextRunAt) parts.push(`下次触发：${formatDateTime(nextRunAt)}`);
-    if (lastRunAt) parts.push(`上次触发：${formatDateTime(lastRunAt)}`);
-    return escapeHtml(parts.join("；") || "立即执行或等待人工确认");
-  }
-
-  function formatExecutionNote(value) {
-    if (!value) return "";
-    const text = String(value)
-      .replaceAll("WAITING_CONFIRM", "等待确认")
-      .replaceAll("CONFIRMED", "已确认")
-      .replaceAll("EXECUTED", "已执行")
-      .replaceAll("SCHEDULED", "已调度")
-      .replaceAll("FAILED", "执行失败")
-      .replaceAll("nextRunAt=", "下次触发时间：")
-      .replaceAll("cron=", "Cron 表达式：");
-    return escapeHtml(replaceEnumText(text));
+    return scheduleTypeText[String(value || "").toLowerCase()] || "无需定时";
   }
 
   function formatPriority(value) {
-    return PRIORITY_TEXT[normalizeEnum(value)] || "普通";
+    return priorityText[String(value || "").toLowerCase()] || "普通";
   }
 
-  function shouldShowCron(schedule) {
-    if (!schedule) return false;
-    const scheduleType = normalizeEnum(readField(schedule, "scheduleType", "schedule_type"));
-    return Boolean(readField(schedule, "cron")) || scheduleType === "recurring";
-  }
-
-  function readTargetName(target) {
-    return readField(target, "name", "address") || "未指定";
-  }
-
-  function readField(obj, ...keys) {
-    if (!obj) return "";
-    for (const key of keys) {
-      if (obj[key] !== undefined && obj[key] !== null && obj[key] !== "") {
-        return obj[key];
-      }
-    }
-    return "";
-  }
-
-  function normalizeEnum(value) {
-    return String(value || "").trim().toLowerCase();
-  }
-
-  function normalizeStatus(value) {
-    return String(value || "").trim().toUpperCase();
-  }
-
-  function replaceEnumText(value) {
-    return Object.entries(ENUM_TEXT_REPLACEMENTS).reduce(
-      (text, [raw, translated]) => text.replaceAll(raw, translated),
-      value
-    );
-  }
-
-  function startReminderPolling() {
-    if (reminderPollStarted) return;
-    reminderPollStarted = true;
-    pollExecutedReminders();
-    setInterval(pollExecutedReminders, 5000);
-  }
-
-  async function pollExecutedReminders() {
-    try {
-      const res = await fetch("/api/ai-task", { cache: "no-store" });
-      if (!res.ok) return;
-      const plans = await res.json();
-      collectExecutedReminders(Array.isArray(plans) ? plans : []);
-    } catch (err) {
-      console.warn("提醒轮询失败", err);
-    }
-  }
-
-  function collectExecutedReminders(plans) {
-    const reminders = plans
-      .flatMap(plan => (plan.tasks || []).map(task => ({ plan, task })))
-      .filter(({ task }) => isExecutedReminder(task));
-
-    if (!reminderPollReady) {
-      reminders.forEach(({ task }) => notifiedReminderIds.add(task.actionId));
-      saveNotifiedReminderIds();
-      reminderPollReady = true;
-      return;
-    }
-
-    reminders.forEach(({ plan, task }) => {
-      if (notifiedReminderIds.has(task.actionId)) return;
-      notifiedReminderIds.add(task.actionId);
-      saveNotifiedReminderIds();
-      showReminderPopup(plan, task);
-    });
-  }
-
-  function isExecutedReminder(task) {
-    return normalizeEnum(readField(task, "actionType", "action_type")) === "reminder"
-      && normalizeStatus(readField(task, "status")) === "EXECUTED";
-  }
-
-  function showReminderPopup(plan, task) {
-    const content = task.content || task.title || "你有一个提醒事项";
-    reminderPopupContent.textContent = content;
-    reminderPopupTime.textContent = `执行时间：${formatDateTime(plan.updatedAt || new Date().toISOString())}`;
-    reminderPopup.classList.add("show");
-    reminderPopup.setAttribute("aria-hidden", "false");
-    clearTimeout(reminderPopupTimer);
-    reminderPopupTimer = setTimeout(hideReminderPopup, 12000);
-  }
-
-  function hideReminderPopup() {
-    reminderPopup.classList.remove("show");
-    reminderPopup.setAttribute("aria-hidden", "true");
-    clearTimeout(reminderPopupTimer);
-  }
-
-  function loadNotifiedReminderIds() {
-    try {
-      return new Set(JSON.parse(localStorage.getItem(REMINDER_NOTIFIED_KEY) || "[]"));
-    } catch (err) {
-      return new Set();
-    }
-  }
-
-  function saveNotifiedReminderIds() {
-    localStorage.setItem(REMINDER_NOTIFIED_KEY, JSON.stringify([...notifiedReminderIds].slice(-300)));
-  }
-
-  function escapeHtml(value) {
-    return String(value).replace(/[&<>"']/g, s => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-    })[s]);
+  function formatRisk(value) {
+    return riskText[String(value || "").toUpperCase()] || "低风险";
   }
 
   function formatConfidence(value) {
-    if (typeof value !== "number") return "未知";
-    return `${Math.round(value * 100)}%`;
+    return typeof value === "number" ? `${Math.round(value * 100)}%` : "未知";
   }
 
-  function formatDateTime(value) {
-    if (!value) return "";
+  function formatPlatform(value) {
+    const text = String(value || "").toUpperCase();
+    if (text === "FEISHU") return "飞书";
+    if (text === "WEB") return "网页";
+    return "其他渠道";
+  }
+
+  function displayText(value) {
+    const replacements = {
+      WAITING_CONFIRM: "等待确认",
+      CONFIRMED: "已确认",
+      SCHEDULED: "已调度",
+      EXECUTED: "已执行",
+      FAILED_FINAL: "最终失败",
+      FAILED: "执行失败",
+      NEEDS_MANUAL_REVIEW: "待人工处理",
+      CANCELLED: "已取消",
+      send_email: "发送邮件",
+      send_message: "发送消息",
+      reply_message: "回复消息",
+      reminder: "提醒事项",
+      create_todo: "创建待办",
+      schedule_task: "定时任务",
+      target_type: "对象类型",
+      schedule_type: "计划类型",
+      run_at: "执行时间",
+      next_run_at: "下次触发时间",
+      last_run_at: "上次触发时间",
+      user: "用户",
+      group: "群组",
+      email: "邮箱",
+      dynamic: "动态对象",
+      self: "本人",
+      unknown: "未识别"
+    };
+    return Object.entries(replacements).reduce((text, [raw, translated]) => {
+      return text.replaceAll(raw, translated);
+    }, String(value == null ? "" : value));
+  }
+
+  function channelLabel(userId) {
+    return String(userId || "").startsWith("feishu:") ? "飞书" : "网页";
+  }
+
+  function currentUserId() {
+    return els.userIdInput.value.trim() || "demo-user";
+  }
+
+  function setStatus(text) {
+    els.statusText.textContent = text;
+  }
+
+  function showToast(title, body) {
+    els.toastTitle.textContent = title;
+    els.toastBody.textContent = body;
+    els.toast.classList.add("show");
+    setTimeout(() => els.toast.classList.remove("show"), 9000);
+  }
+
+  function showError(err) {
+    const message = err && err.message ? err.message : String(err);
+    setStatus(`操作失败：${message}`);
+    showToast("操作失败", message);
+  }
+
+  function short(value, len) {
+    const text = String(value || "");
+    return text.length > len ? `${text.slice(0, len - 1)}...` : text;
+  }
+
+  function formatDate(value) {
+    if (!value) return "-";
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString("zh-CN", { hour12: false });
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, ch => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    }[ch]));
   }
 </script>
 </body>

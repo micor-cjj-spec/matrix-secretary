@@ -1,6 +1,8 @@
 package com.kailei.demo.controller;
 
 import com.kailei.demo.entity.TaskExecutionLogEntity;
+import com.kailei.demo.channel.entity.ChannelEventLogEntity;
+import com.kailei.demo.channel.repository.ChannelEventLogRepository;
 import com.kailei.demo.model.CancelTaskRequest;
 import com.kailei.demo.model.ConfirmTaskRequest;
 import com.kailei.demo.model.ConfirmTaskResponse;
@@ -35,15 +37,18 @@ public class TaskCenterController {
     private final TaskCommandService taskCommandService;
     private final TaskQueryService taskQueryService;
     private final TaskExecutionLogRepository executionLogRepository;
+    private final ChannelEventLogRepository channelEventLogRepository;
 
     public TaskCenterController(TaskPreviewService taskPreviewService,
                                 TaskCommandService taskCommandService,
                                 TaskQueryService taskQueryService,
-                                TaskExecutionLogRepository executionLogRepository) {
+                                TaskExecutionLogRepository executionLogRepository,
+                                ChannelEventLogRepository channelEventLogRepository) {
         this.taskPreviewService = taskPreviewService;
         this.taskCommandService = taskCommandService;
         this.taskQueryService = taskQueryService;
         this.executionLogRepository = executionLogRepository;
+        this.channelEventLogRepository = channelEventLogRepository;
     }
 
     @PostMapping("/plans/preview")
@@ -131,5 +136,10 @@ public class TaskCenterController {
     public List<TaskPlan> listSessionPlans(@PathVariable String sessionId,
                                            @RequestParam(required = false) String userId) {
         return taskQueryService.listBySession(sessionId, userId);
+    }
+
+    @GetMapping("/channel-events")
+    public List<ChannelEventLogEntity> channelEvents(@RequestParam(defaultValue = "20") int limit) {
+        return channelEventLogRepository.findRecent(limit);
     }
 }

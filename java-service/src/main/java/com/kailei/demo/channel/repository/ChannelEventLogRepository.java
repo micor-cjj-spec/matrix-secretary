@@ -9,6 +9,7 @@ import com.kailei.demo.channel.model.ChannelIncomingMessage;
 import org.springframework.stereotype.Repository;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -31,6 +32,13 @@ public class ChannelEventLogRepository {
                 .eq(ChannelEventLogEntity::getPlatform, platform)
                 .eq(ChannelEventLogEntity::getEventId, eventId));
         return count != null && count > 0;
+    }
+
+    public List<ChannelEventLogEntity> findRecent(int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        return mapper.selectList(new LambdaQueryWrapper<ChannelEventLogEntity>()
+                .orderByDesc(ChannelEventLogEntity::getCreatedAt)
+                .last("limit " + safeLimit));
     }
 
     public ChannelEventLogEntity createReceived(String platform, String tenantId, String eventId, String rawPayload) {
