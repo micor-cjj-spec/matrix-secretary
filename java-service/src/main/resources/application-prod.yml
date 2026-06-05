@@ -1,0 +1,6 @@
+ai-secretary:
+  auth:
+    required: true
+  api-key: ${AI_SECRETARY_API_KEY}
+  http-skill:
+    enabled: false
