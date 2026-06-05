@@ -25,26 +25,26 @@ public class TaskQueryService {
     }
 
     public TaskPlan get(String planId, String userId) {
+        requireUserId(userId);
         TaskPlan plan = get(planId);
         ensureSameUser(plan, userId);
         return plan;
     }
 
     public List<TaskPlan> list(String userId) {
-        if (userId == null || userId.isBlank()) {
-            return taskPlanRepository.findAll();
-        }
+        requireUserId(userId);
         return taskPlanRepository.findByUserId(userId);
     }
 
     public List<TaskPlan> list() {
-        return list(null);
+        throw new IllegalArgumentException("缺少 userId，不允许查询全部任务");
     }
 
     public SessionState getSession(String sessionId, String userId) {
+        requireUserId(userId);
         SessionState session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + sessionId));
-        if (userId != null && !userId.isBlank() && session.userId() != null && !session.userId().equals(userId)) {
+        if (session.userId() == null || !session.userId().equals(userId)) {
             throw new IllegalArgumentException("会话不存在或无权访问: " + sessionId);
         }
         return session;
@@ -56,11 +56,14 @@ public class TaskQueryService {
     }
 
     private void ensureSameUser(TaskPlan plan, String userId) {
-        if (userId == null || userId.isBlank()) {
-            return;
-        }
         if (plan.userId() == null || !plan.userId().equals(userId)) {
             throw new IllegalArgumentException("任务计划不存在或无权访问: " + plan.planId());
+        }
+    }
+
+    private void requireUserId(String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("缺少 userId");
         }
     }
 }
