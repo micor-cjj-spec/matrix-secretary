@@ -1,0 +1,9 @@
+CREATE DATABASE IF NOT EXISTS ai_secretary_demo
+DEFAULT CHARACTER SET utf8mb4
+DEFAULT COLLATE utf8mb4_0900_ai_ci;
+
+CREATE USER IF NOT EXISTS 'ai_demo'@'%' IDENTIFIED BY 'ai_demo_123';
+
+GRANT ALL PRIVILEGES ON ai_secretary_demo.* TO 'ai_demo'@'%';
+
+FLUSH PRIVILEGES;
