@@ -47,7 +47,7 @@ public class AiSchemaColumnEntity {
     @ColumnComment("业务名称")
     private String businessName;
 
-    @ColumnType(MysqlTypeConstant.TEXT)
+    @ColumnType(MysqlTypeConstant.LONGTEXT)
     @ColumnComment("枚举映射JSON")
     private String enumMappingJson;
 
