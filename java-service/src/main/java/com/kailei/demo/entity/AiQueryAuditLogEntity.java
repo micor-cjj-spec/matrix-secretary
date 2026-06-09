@@ -31,15 +31,15 @@ public class AiQueryAuditLogEntity {
     @ColumnComment("数据源编码")
     private String datasourceCode;
 
-    @ColumnType(MysqlTypeConstant.TEXT)
+    @ColumnType(MysqlTypeConstant.LONGTEXT)
     @ColumnComment("用户自然语言问题")
     private String question;
 
-    @ColumnType(MysqlTypeConstant.TEXT)
+    @ColumnType(MysqlTypeConstant.LONGTEXT)
     @ColumnComment("生成SQL")
     private String generatedSql;
 
-    @ColumnType(MysqlTypeConstant.TEXT)
+    @ColumnType(MysqlTypeConstant.LONGTEXT)
     @ColumnComment("最终执行SQL")
     private String finalSql;
 
