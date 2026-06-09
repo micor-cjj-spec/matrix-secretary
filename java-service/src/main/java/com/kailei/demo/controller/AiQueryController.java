@@ -4,6 +4,7 @@ import com.kailei.demo.entity.AiDataSourceConfigEntity;
 import com.kailei.demo.entity.AiSchemaColumnEntity;
 import com.kailei.demo.entity.AiSchemaTableEntity;
 import com.kailei.demo.model.AiDataSourceUpsertRequest;
+import com.kailei.demo.model.AiNlQueryRequest;
 import com.kailei.demo.model.AiQueryResponse;
 import com.kailei.demo.model.AiSqlQueryRequest;
 import com.kailei.demo.model.AiTableAccessRequest;
@@ -71,6 +72,11 @@ public class AiQueryController {
     public List<AiSchemaColumnEntity> listColumns(@PathVariable String datasourceCode,
                                                   @PathVariable String tableName) {
         return schemaMetadataService.listColumns(datasourceCode, tableName);
+    }
+
+    @PostMapping("/nl-query")
+    public AiQueryResponse nlQuery(@Valid @RequestBody AiNlQueryRequest request) {
+        return aiQueryService.nlQuery(request);
     }
 
     @PostMapping("/sql-query")
