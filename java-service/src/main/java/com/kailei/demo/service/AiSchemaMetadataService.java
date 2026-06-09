@@ -74,6 +74,20 @@ public class AiSchemaMetadataService {
                 .orderByAsc(AiSchemaColumnEntity::getColumnName));
     }
 
+    public AiSchemaTableEntity setTableQueryEnabled(String datasourceCode, String tableName, boolean enabled) {
+        AiSchemaTableEntity existing = schemaTableMapper.selectOne(new LambdaQueryWrapper<AiSchemaTableEntity>()
+                .eq(AiSchemaTableEntity::getDatasourceCode, datasourceCode)
+                .eq(AiSchemaTableEntity::getTableName, tableName)
+                .last("limit 1"));
+        if (existing == null) {
+            throw new IllegalArgumentException("表元数据不存在，请先扫描数据源: " + tableName);
+        }
+        existing.setQueryEnabledFlag(enabled ? 1 : 0);
+        existing.setUpdatedAt(OffsetDateTime.now());
+        schemaTableMapper.updateById(existing);
+        return existing;
+    }
+
     public Set<String> allowedTables(String datasourceCode) {
         Set<String> tables = new LinkedHashSet<>();
         schemaTableMapper.selectList(new LambdaQueryWrapper<AiSchemaTableEntity>()
