@@ -6,11 +6,13 @@ import com.kailei.demo.entity.AiSchemaTableEntity;
 import com.kailei.demo.model.AiDataSourceUpsertRequest;
 import com.kailei.demo.model.AiQueryResponse;
 import com.kailei.demo.model.AiSqlQueryRequest;
+import com.kailei.demo.model.AiTableAccessRequest;
 import com.kailei.demo.service.AiDataSourceService;
 import com.kailei.demo.service.AiQueryService;
 import com.kailei.demo.service.AiSchemaMetadataService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -55,6 +57,14 @@ public class AiQueryController {
     @GetMapping("/datasources/{datasourceCode}/tables")
     public List<AiSchemaTableEntity> listTables(@PathVariable String datasourceCode) {
         return schemaMetadataService.listTables(datasourceCode);
+    }
+
+    @PatchMapping("/datasources/{datasourceCode}/tables/{tableName}/access")
+    public AiSchemaTableEntity setTableAccess(@PathVariable String datasourceCode,
+                                              @PathVariable String tableName,
+                                              @RequestBody(required = false) AiTableAccessRequest request) {
+        boolean enabled = request != null && Boolean.TRUE.equals(request.queryEnabled());
+        return schemaMetadataService.setTableQueryEnabled(datasourceCode, tableName, enabled);
     }
 
     @GetMapping("/datasources/{datasourceCode}/tables/{tableName}/columns")
