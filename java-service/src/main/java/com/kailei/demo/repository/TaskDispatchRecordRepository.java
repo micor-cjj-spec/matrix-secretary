@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kailei.demo.entity.TaskDispatchRecordEntity;
 import com.kailei.demo.mapper.TaskDispatchRecordMapper;
 import com.kailei.demo.model.PageResult;
+import com.kailei.demo.model.TaskDispatchSummaryResponse;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
@@ -88,6 +89,26 @@ public class TaskDispatchRecordRepository {
                 new Page<>(PageResult.normalizePage(page), PageResult.normalizeSize(size)),
                 wrapper
         ));
+    }
+
+    public TaskDispatchSummaryResponse summarizeByPlanId(String planId) {
+        return new TaskDispatchSummaryResponse(
+                countByPlanId(planId),
+                countByPlanIdAndStatus(planId, STATUS_RUNNING),
+                countByPlanIdAndStatus(planId, STATUS_SUCCEEDED),
+                countByPlanIdAndStatus(planId, STATUS_FAILED)
+        );
+    }
+
+    private long countByPlanId(String planId) {
+        return mapper.selectCount(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
+                .eq(TaskDispatchRecordEntity::getPlanId, planId));
+    }
+
+    private long countByPlanIdAndStatus(String planId, String status) {
+        return mapper.selectCount(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
+                .eq(TaskDispatchRecordEntity::getPlanId, planId)
+                .eq(TaskDispatchRecordEntity::getStatus, status));
     }
 
     private void applyQueryFilters(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,

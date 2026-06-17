@@ -10,6 +10,7 @@ import com.kailei.demo.model.PageResult;
 import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.RetryTaskRequest;
 import com.kailei.demo.model.SessionState;
+import com.kailei.demo.model.TaskDetailResponse;
 import com.kailei.demo.model.TaskDispatchRecordResponse;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.repository.TaskDispatchRecordRepository;
@@ -32,6 +33,9 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/ai-task")
 public class AiTaskController {
+
+    private static final long DEFAULT_RECENT_LOG_SIZE = 20;
+    private static final long DEFAULT_RECENT_DISPATCH_SIZE = 20;
 
     private final AiTaskService aiTaskService;
     private final TaskExecutionLogRepository executionLogRepository;
@@ -84,6 +88,32 @@ public class AiTaskController {
     public TaskPlan get(@PathVariable String planId,
                         @RequestParam(required = false) String userId) {
         return aiTaskService.get(planId, userId);
+    }
+
+    @GetMapping("/{planId}/detail")
+    public TaskDetailResponse detail(@PathVariable String planId,
+                                     @RequestParam(required = false) String userId,
+                                     @RequestParam(required = false) Long recentLogSize,
+                                     @RequestParam(required = false) Long recentDispatchSize) {
+        TaskPlan plan = aiTaskService.get(planId, userId);
+        PageResult<TaskDispatchRecordEntity> recentDispatchPage = dispatchRecordRepository.findByPlanId(
+                planId,
+                null,
+                null,
+                null,
+                null,
+                1L,
+                recentDispatchSize == null ? DEFAULT_RECENT_DISPATCH_SIZE : recentDispatchSize
+        );
+        return new TaskDetailResponse(
+                plan,
+                executionLogRepository.findRecentByPlanId(
+                        planId,
+                        recentLogSize == null ? DEFAULT_RECENT_LOG_SIZE : recentLogSize
+                ),
+                recentDispatchPage.records().stream().map(TaskDispatchRecordResponse::from).toList(),
+                dispatchRecordRepository.summarizeByPlanId(planId)
+        );
     }
 
     @GetMapping("/{planId}/logs")

@@ -1,6 +1,7 @@
 package com.kailei.demo.repository;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kailei.demo.entity.TaskExecutionLogEntity;
@@ -15,6 +16,9 @@ import java.util.UUID;
 
 @Repository
 public class TaskExecutionLogRepository {
+
+    private static final long DEFAULT_RECENT_LIMIT = 20;
+    private static final long MAX_RECENT_LIMIT = 100;
 
     private final TaskExecutionLogMapper mapper;
     private final ObjectMapper objectMapper;
@@ -73,11 +77,25 @@ public class TaskExecutionLogRepository {
                 .orderByDesc(TaskExecutionLogEntity::getCreatedAt));
     }
 
+    public List<TaskExecutionLogEntity> findRecentByPlanId(String planId, Long limit) {
+        return mapper.selectPage(new Page<>(1, normalizeRecentLimit(limit)), new LambdaQueryWrapper<TaskExecutionLogEntity>()
+                        .eq(TaskExecutionLogEntity::getPlanId, planId)
+                        .orderByDesc(TaskExecutionLogEntity::getCreatedAt))
+                .getRecords();
+    }
+
     public List<TaskExecutionLogEntity> findByPlanIdAndActionId(String planId, String actionId) {
         return mapper.selectList(new LambdaQueryWrapper<TaskExecutionLogEntity>()
                 .eq(TaskExecutionLogEntity::getPlanId, planId)
                 .eq(TaskExecutionLogEntity::getActionId, actionId)
                 .orderByDesc(TaskExecutionLogEntity::getCreatedAt));
+    }
+
+    private long normalizeRecentLimit(Long limit) {
+        if (limit == null || limit < 1) {
+            return DEFAULT_RECENT_LIMIT;
+        }
+        return Math.min(limit, MAX_RECENT_LIMIT);
     }
 
     private String writeJson(Object value) {
