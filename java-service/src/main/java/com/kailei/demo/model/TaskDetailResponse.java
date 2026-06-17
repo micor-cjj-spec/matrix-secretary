@@ -1,12 +1,10 @@
 package com.kailei.demo.model;
 
-import com.kailei.demo.entity.TaskExecutionLogEntity;
-
 import java.util.List;
 
 public record TaskDetailResponse(
         TaskPlan plan,
-        List<TaskExecutionLogEntity> recentExecutionLogs,
+        List<TaskExecutionLogResponse> recentExecutionLogs,
         List<TaskDispatchRecordResponse> recentDispatchRecords,
         TaskDispatchSummaryResponse dispatchSummary
 ) {
