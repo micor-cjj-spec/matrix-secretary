@@ -121,6 +121,27 @@ public class TaskDispatchRecordRepository {
                 .last("LIMIT 1")));
     }
 
+    public long countRunningRecords() {
+        return countByStatus(STATUS_RUNNING);
+    }
+
+    public long countFailedRecords() {
+        return countByStatus(STATUS_FAILED);
+    }
+
+    public long countRetryScheduledRecords() {
+        return mapper.selectCount(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
+                .eq(TaskDispatchRecordEntity::getStatus, STATUS_FAILED)
+                .isNotNull(TaskDispatchRecordEntity::getNextRetryAt)
+                .apply("COALESCE(retry_count, 0) < COALESCE(max_retry_count, 0)"));
+    }
+
+    public long countRetryExhaustedRecords() {
+        return mapper.selectCount(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
+                .eq(TaskDispatchRecordEntity::getStatus, STATUS_FAILED)
+                .apply("COALESCE(retry_count, 0) >= COALESCE(max_retry_count, 0)"));
+    }
+
     private long countByPlanId(String planId) {
         return mapper.selectCount(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
                 .eq(TaskDispatchRecordEntity::getPlanId, planId));
@@ -129,6 +150,11 @@ public class TaskDispatchRecordRepository {
     private long countByPlanIdAndStatus(String planId, String status) {
         return mapper.selectCount(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
                 .eq(TaskDispatchRecordEntity::getPlanId, planId)
+                .eq(TaskDispatchRecordEntity::getStatus, status));
+    }
+
+    private long countByStatus(String status) {
+        return mapper.selectCount(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
                 .eq(TaskDispatchRecordEntity::getStatus, status));
     }
 
