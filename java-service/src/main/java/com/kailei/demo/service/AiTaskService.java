@@ -13,6 +13,7 @@ import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.model.TaskSchedule;
 import com.kailei.demo.model.TaskStatus;
 import com.kailei.demo.repository.AiSessionRepository;
+import com.kailei.demo.repository.TaskDispatchRecordRepository;
 import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.repository.TaskPlanRepository;
 import com.kailei.demo.skill.SkillCatalog;
@@ -41,6 +42,7 @@ public class AiTaskService {
     private final TaskExecutionLogRepository executionLogRepository;
     private final AiSessionRepository sessionRepository;
     private final TaskStateMachineService stateMachine;
+    private final TaskDispatchRecordRepository dispatchRecordRepository;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
@@ -49,7 +51,8 @@ public class AiTaskService {
                          CronScheduleService cronScheduleService,
                          TaskExecutionLogRepository executionLogRepository,
                          AiSessionRepository sessionRepository,
-                         TaskStateMachineService stateMachine) {
+                         TaskStateMachineService stateMachine,
+                         TaskDispatchRecordRepository dispatchRecordRepository) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
@@ -58,6 +61,7 @@ public class AiTaskService {
         this.executionLogRepository = executionLogRepository;
         this.sessionRepository = sessionRepository;
         this.stateMachine = stateMachine;
+        this.dispatchRecordRepository = dispatchRecordRepository;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
@@ -313,12 +317,38 @@ public class AiTaskService {
         if (!acquired) {
             return;
         }
-        repository.findById(dueAction.getPlanId())
-                .ifPresent(plan -> dispatchDueAction(plan, dueAction.getActionId(), now));
+
+        OffsetDateTime triggerAt = dueAction.getNextRunAt();
+        String idempotencyKey = dispatchRecordRepository.buildIdempotencyKey(
+                dueAction.getPlanId(),
+                dueAction.getActionId(),
+                triggerAt
+        );
+        if (dispatchRecordRepository.hasSucceeded(idempotencyKey)) {
+            return;
+        }
+        if (!dispatchRecordRepository.tryStart(dueAction.getPlanId(), dueAction.getActionId(), triggerAt, owner)) {
+            return;
+        }
+
+        try {
+            DispatchResult result = repository.findById(dueAction.getPlanId())
+                    .map(plan -> dispatchDueAction(plan, dueAction.getActionId(), now))
+                    .orElseGet(() -> DispatchResult.failed("任务计划不存在: " + dueAction.getPlanId()));
+            if (result.status() == TaskStatus.FAILED) {
+                dispatchRecordRepository.markFailed(idempotencyKey, result.note());
+                return;
+            }
+            dispatchRecordRepository.markSucceeded(idempotencyKey);
+        } catch (RuntimeException ex) {
+            dispatchRecordRepository.markFailed(idempotencyKey, ex.getMessage());
+            throw ex;
+        }
     }
 
-    private void dispatchDueAction(TaskPlan plan, String actionId, OffsetDateTime now) {
+    private DispatchResult dispatchDueAction(TaskPlan plan, String actionId, OffsetDateTime now) {
         List<TaskAction> nextActions = new ArrayList<>();
+        TaskAction dispatchedAction = null;
         boolean matched = false;
         for (TaskAction action : plan.tasks()) {
             if (!action.actionId().equals(actionId)) {
@@ -326,15 +356,17 @@ public class AiTaskService {
                 continue;
             }
             matched = true;
-            nextActions.add(dispatchIfDue(plan, action, now));
+            dispatchedAction = dispatchIfDue(plan, action, now);
+            nextActions.add(dispatchedAction);
         }
         if (!matched) {
-            return;
+            return DispatchResult.failed("任务动作不存在: " + actionId);
         }
         if (!nextActions.equals(plan.tasks())) {
             TaskPlan saved = repository.save(plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions));
             sessionRepository.updateAfterPlanChange(saved);
         }
+        return DispatchResult.from(dispatchedAction);
     }
 
     private void ensureSameUser(TaskPlan plan, String userId) {
@@ -392,6 +424,24 @@ public class AiTaskService {
             return executed;
         } catch (DateTimeParseException ex) {
             return action.withStatus(TaskStatus.FAILED, "时间格式无法解析: " + schedule.effectiveRunAt());
+        }
+    }
+
+    private record DispatchResult(TaskStatus status, String note) {
+        private static DispatchResult from(TaskAction action) {
+            if (action == null) {
+                return failed("任务动作执行结果为空");
+            }
+            return new DispatchResult(
+                    action.status(),
+                    action.executionNote() == null || action.executionNote().isBlank()
+                            ? action.status().name()
+                            : action.executionNote()
+            );
+        }
+
+        private static DispatchResult failed(String note) {
+            return new DispatchResult(TaskStatus.FAILED, note);
         }
     }
 }
