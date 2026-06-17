@@ -36,6 +36,7 @@ public class AiTaskService {
     private final CronScheduleService cronScheduleService;
     private final TaskExecutionLogRepository executionLogRepository;
     private final AiSessionRepository sessionRepository;
+    private final TaskStateMachineService stateMachine;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
@@ -43,7 +44,8 @@ public class AiTaskService {
                          SkillCatalog skillCatalog,
                          CronScheduleService cronScheduleService,
                          TaskExecutionLogRepository executionLogRepository,
-                         AiSessionRepository sessionRepository) {
+                         AiSessionRepository sessionRepository,
+                         TaskStateMachineService stateMachine) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
@@ -51,6 +53,7 @@ public class AiTaskService {
         this.cronScheduleService = cronScheduleService;
         this.executionLogRepository = executionLogRepository;
         this.sessionRepository = sessionRepository;
+        this.stateMachine = stateMachine;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
@@ -93,9 +96,7 @@ public class AiTaskService {
         String requestedOperator = request == null ? null : request.operatorUserId();
         ensureOperatorCanAccess(plan, requestedOperator);
         String effectiveOperator = effectiveOperator(requestedOperator, plan.userId());
-        if (plan.status() != TaskStatus.WAITING_CONFIRM) {
-            throw new IllegalArgumentException("只有 WAITING_CONFIRM 状态的任务计划允许编辑: " + planId);
-        }
+        stateMachine.assertPlanEditable(plan);
 
         List<TaskAction> nextActions = new ArrayList<>();
         boolean matched = false;
@@ -105,9 +106,7 @@ public class AiTaskService {
                 continue;
             }
             matched = true;
-            if (action.status() != TaskStatus.WAITING_CONFIRM) {
-                throw new IllegalArgumentException("只有 WAITING_CONFIRM 状态的任务动作允许编辑: " + actionId);
-            }
+            stateMachine.assertActionEditable(action);
             TaskSchedule nextSchedule = request == null || request.schedule() == null
                     ? null
                     : cronScheduleService.ensureCronAndNextRun(request.schedule());
@@ -170,7 +169,7 @@ public class AiTaskService {
         TaskPlan plan = get(planId);
         ensureOperatorCanAccess(plan, operatorUserId);
         String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
-        if (plan.status() != TaskStatus.WAITING_CONFIRM) {
+        if (!stateMachine.canConfirm(plan)) {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
 
@@ -178,7 +177,7 @@ public class AiTaskService {
                 .map(action -> executionService.confirmAction(plan.planId(), plan.userId(), action, effectiveOperator))
                 .toList();
 
-        TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
+        TaskPlan nextPlan = plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions);
         TaskPlan saved = repository.save(nextPlan);
         sessionRepository.updateAfterPlanChange(saved);
         return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
@@ -191,11 +190,7 @@ public class AiTaskService {
         if (plan.status() == TaskStatus.CANCELLED) {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
-        boolean hasExecutedAction = plan.tasks().stream()
-                .anyMatch(action -> action.status() == TaskStatus.EXECUTED);
-        if (hasExecutedAction) {
-            throw new IllegalArgumentException("任务已存在已执行动作，不能整体取消: " + planId);
-        }
+        stateMachine.assertPlanCancellable(plan);
 
         String cancelReason = reason == null || reason.isBlank() ? "用户主动取消" : reason;
         List<TaskAction> nextActions = plan.tasks().stream()
@@ -226,15 +221,13 @@ public class AiTaskService {
                 continue;
             }
             matched = true;
-            if (action.status() != TaskStatus.FAILED) {
-                throw new IllegalArgumentException("只有 FAILED 状态的动作允许重试: " + actionId);
-            }
+            stateMachine.assertActionRetryable(action);
             nextActions.add(executionService.executeNow(plan.planId(), plan.userId(), action, effectiveOperator));
         }
         if (!matched) {
             throw new IllegalArgumentException("任务动作不存在: " + actionId);
         }
-        TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
+        TaskPlan nextPlan = plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions);
         TaskPlan saved = repository.save(nextPlan);
         sessionRepository.updateAfterPlanChange(saved);
         return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
@@ -283,7 +276,7 @@ public class AiTaskService {
                     .map(action -> dispatchIfDue(plan, action, now))
                     .toList();
             if (!nextActions.equals(plan.tasks())) {
-                TaskPlan saved = repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
+                TaskPlan saved = repository.save(plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions));
                 sessionRepository.updateAfterPlanChange(saved);
             }
         });
@@ -313,22 +306,6 @@ public class AiTaskService {
                 : operatorUserId;
     }
 
-    private TaskStatus resolvePlanStatus(List<TaskAction> actions) {
-        if (actions.stream().allMatch(action -> action.status() == TaskStatus.CANCELLED)) {
-            return TaskStatus.CANCELLED;
-        }
-        if (actions.stream().anyMatch(action -> action.status() == TaskStatus.SCHEDULED)) {
-            return TaskStatus.SCHEDULED;
-        }
-        if (actions.stream().anyMatch(action -> action.status() == TaskStatus.FAILED)) {
-            return TaskStatus.FAILED;
-        }
-        if (actions.stream().allMatch(action -> action.status() == TaskStatus.EXECUTED)) {
-            return TaskStatus.EXECUTED;
-        }
-        return TaskStatus.CONFIRMED;
-    }
-
     private ExecutionSummary summarize(List<TaskAction> actions) {
         int executed = (int) actions.stream().filter(action -> action.status() == TaskStatus.EXECUTED).count();
         int scheduled = (int) actions.stream().filter(action -> action.status() == TaskStatus.SCHEDULED).count();
@@ -337,7 +314,7 @@ public class AiTaskService {
     }
 
     private TaskAction dispatchIfDue(TaskPlan plan, TaskAction action, OffsetDateTime now) {
-        if (action.status() != TaskStatus.SCHEDULED || action.schedule() == null) {
+        if (!stateMachine.canDispatch(action)) {
             return action;
         }
         TaskSchedule schedule = cronScheduleService.ensureCronAndNextRun(action.schedule());
