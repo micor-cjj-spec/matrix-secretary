@@ -18,6 +18,8 @@ import com.kailei.demo.model.TaskTarget;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -75,6 +77,17 @@ public class TaskPlanRepository {
             wrapper.eq(TaskPlanEntity::getUserId, userId);
         }
         return toPageResult(taskPlanMapper.selectPage(new Page<>(page, size), wrapper));
+    }
+
+    public PageResult<TaskActionEntity> findDueScheduledActions(OffsetDateTime now, long page, long size) {
+        LambdaQueryWrapper<TaskActionEntity> wrapper = new LambdaQueryWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                .isNotNull(TaskActionEntity::getNextRunAt)
+                .le(TaskActionEntity::getNextRunAt, now)
+                .orderByAsc(TaskActionEntity::getNextRunAt)
+                .orderByAsc(TaskActionEntity::getSortOrder);
+        Page<TaskActionEntity> actionPage = taskActionMapper.selectPage(new Page<>(page, size), wrapper);
+        return new PageResult<>(actionPage.getRecords(), actionPage.getTotal(), actionPage.getCurrent(), actionPage.getSize(), actionPage.getPages());
     }
 
     public List<TaskPlan> findByUserId(String userId) {
@@ -138,6 +151,7 @@ public class TaskPlanRepository {
 
     private TaskActionEntity toActionEntity(String planId, TaskAction action, int sortOrder) {
         TaskActionEntity entity = new TaskActionEntity();
+        TaskSchedule schedule = action.schedule();
         entity.setActionId(action.actionId());
         entity.setPlanId(planId);
         entity.setActionType(action.actionType());
@@ -145,7 +159,7 @@ public class TaskPlanRepository {
         entity.setTitle(limit(action.title(), 255));
         entity.setContent(action.content());
         entity.setTargetJson(writeJson(action.target()));
-        entity.setScheduleJson(writeJson(action.schedule()));
+        entity.setScheduleJson(writeJson(schedule));
         entity.setArgsJson(writeJson(action.args()));
         entity.setPriority(limit(action.priority(), 32));
         entity.setRiskLevel(limit(action.riskLevel(), 32));
@@ -154,6 +168,9 @@ public class TaskPlanRepository {
         entity.setSourceSentence(action.sourceSentence());
         entity.setAnalysisNote(limit(action.analysisNote(), 512));
         entity.setStatus(action.status().name());
+        entity.setNextRunAt(parseOffsetDateTime(schedule == null ? null : schedule.effectiveRunAt()));
+        entity.setLastRunAt(parseOffsetDateTime(schedule == null ? null : schedule.lastRunAt()));
+        entity.setTriggerCount(schedule == null ? 0 : schedule.triggerCount());
         entity.setExecutionNote(limit(action.executionNote(), 512));
         entity.setSortOrder(sortOrder);
         return entity;
@@ -238,6 +255,17 @@ public class TaskPlanRepository {
             return objectMapper.readValue(json, type);
         } catch (JsonProcessingException ex) {
             return fallback;
+        }
+    }
+
+    private OffsetDateTime parseOffsetDateTime(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return OffsetDateTime.parse(value);
+        } catch (DateTimeParseException ex) {
+            return null;
         }
     }
 

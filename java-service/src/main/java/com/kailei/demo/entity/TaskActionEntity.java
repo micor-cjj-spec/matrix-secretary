@@ -10,6 +10,8 @@ import org.dromara.autotable.annotation.Index;
 import org.dromara.autotable.annotation.PrimaryKey;
 import org.dromara.autotable.annotation.mysql.MysqlTypeConstant;
 
+import java.time.OffsetDateTime;
+
 @TableName("ai_task_action")
 @AutoTable(value = "ai_task_action", comment = "AI秘书任务动作表")
 public class TaskActionEntity {
@@ -75,9 +77,20 @@ public class TaskActionEntity {
     @ColumnComment("语义解析备注")
     private String analysisNote;
 
+    @Index
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 32)
     @ColumnComment("动作状态")
     private String status;
+
+    @Index
+    @ColumnComment("下一次触发时间")
+    private OffsetDateTime nextRunAt;
+
+    @ColumnComment("上一次触发时间")
+    private OffsetDateTime lastRunAt;
+
+    @ColumnComment("已触发次数")
+    private Integer triggerCount;
 
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 512)
     @ColumnComment("执行说明")
@@ -118,6 +131,12 @@ public class TaskActionEntity {
     public void setAnalysisNote(String analysisNote) { this.analysisNote = analysisNote; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public OffsetDateTime getNextRunAt() { return nextRunAt; }
+    public void setNextRunAt(OffsetDateTime nextRunAt) { this.nextRunAt = nextRunAt; }
+    public OffsetDateTime getLastRunAt() { return lastRunAt; }
+    public void setLastRunAt(OffsetDateTime lastRunAt) { this.lastRunAt = lastRunAt; }
+    public Integer getTriggerCount() { return triggerCount; }
+    public void setTriggerCount(Integer triggerCount) { this.triggerCount = triggerCount; }
     public String getExecutionNote() { return executionNote; }
     public void setExecutionNote(String executionNote) { this.executionNote = executionNote; }
     public Integer getSortOrder() { return sortOrder; }
