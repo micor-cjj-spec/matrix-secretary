@@ -1,6 +1,7 @@
 package com.kailei.demo.service;
 
 import com.kailei.demo.client.PythonSemanticClient;
+import com.kailei.demo.entity.TaskActionEntity;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.ExecutionSummary;
@@ -292,24 +293,29 @@ public class AiTaskService {
     public void dispatchDueOnceTasks(Long pageSize) {
         OffsetDateTime now = OffsetDateTime.now();
         long normalizedSize = PageResult.normalizeSize(pageSize);
-        long page = 1;
-        while (true) {
-            PageResult<TaskPlan> planPage = repository.findPage(null, page, normalizedSize);
-            if (planPage.records().isEmpty()) {
-                break;
-            }
-            planPage.records().forEach(plan -> dispatchDueActions(plan, now));
-            if (page >= planPage.pages()) {
-                break;
-            }
-            page++;
-        }
+        PageResult<TaskActionEntity> dueActions = repository.findDueScheduledActions(now, 1, normalizedSize);
+        dueActions.records().forEach(action -> dispatchDueAction(action, now));
     }
 
-    private void dispatchDueActions(TaskPlan plan, OffsetDateTime now) {
-        List<TaskAction> nextActions = plan.tasks().stream()
-                .map(action -> dispatchIfDue(plan, action, now))
-                .toList();
+    private void dispatchDueAction(TaskActionEntity dueAction, OffsetDateTime now) {
+        repository.findById(dueAction.getPlanId())
+                .ifPresent(plan -> dispatchDueAction(plan, dueAction.getActionId(), now));
+    }
+
+    private void dispatchDueAction(TaskPlan plan, String actionId, OffsetDateTime now) {
+        List<TaskAction> nextActions = new ArrayList<>();
+        boolean matched = false;
+        for (TaskAction action : plan.tasks()) {
+            if (!action.actionId().equals(actionId)) {
+                nextActions.add(action);
+                continue;
+            }
+            matched = true;
+            nextActions.add(dispatchIfDue(plan, action, now));
+        }
+        if (!matched) {
+            return;
+        }
         if (!nextActions.equals(plan.tasks())) {
             TaskPlan saved = repository.save(plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions));
             sessionRepository.updateAfterPlanChange(saved);
