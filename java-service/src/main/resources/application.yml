@@ -49,6 +49,8 @@ ai-secretary:
     dispatch-page-size: ${AI_SECRETARY_DISPATCH_PAGE_SIZE:50}
     dispatch-lease-seconds: ${AI_SECRETARY_DISPATCH_LEASE_SECONDS:60}
     dispatch-owner: ${AI_SECRETARY_DISPATCH_OWNER:local-scheduler}
+    dispatch-running-timeout-seconds: ${AI_SECRETARY_DISPATCH_RUNNING_TIMEOUT_SECONDS:300}
+    dispatch-recovery-batch-size: ${AI_SECRETARY_DISPATCH_RECOVERY_BATCH_SIZE:50}
 
 feishu:
   enabled: ${FEISHU_ENABLED:false}
