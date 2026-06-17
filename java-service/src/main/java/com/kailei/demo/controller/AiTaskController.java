@@ -12,6 +12,7 @@ import com.kailei.demo.model.RetryTaskRequest;
 import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskDetailResponse;
 import com.kailei.demo.model.TaskDispatchRecordResponse;
+import com.kailei.demo.model.TaskExecutionLogResponse;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.repository.TaskDispatchRecordRepository;
 import com.kailei.demo.repository.TaskExecutionLogRepository;
@@ -108,27 +109,29 @@ public class AiTaskController {
         return new TaskDetailResponse(
                 plan,
                 executionLogRepository.findRecentByPlanId(
-                        planId,
-                        recentLogSize == null ? DEFAULT_RECENT_LOG_SIZE : recentLogSize
-                ),
+                                planId,
+                                recentLogSize == null ? DEFAULT_RECENT_LOG_SIZE : recentLogSize
+                        ).stream()
+                        .map(TaskExecutionLogResponse::from)
+                        .toList(),
                 recentDispatchPage.records().stream().map(TaskDispatchRecordResponse::from).toList(),
                 dispatchRecordRepository.summarizeByPlanId(planId)
         );
     }
 
     @GetMapping("/{planId}/logs")
-    public List<TaskExecutionLogEntity> logs(@PathVariable String planId,
-                                             @RequestParam(required = false) String userId) {
+    public List<TaskExecutionLogResponse> logs(@PathVariable String planId,
+                                               @RequestParam(required = false) String userId) {
         aiTaskService.get(planId, userId);
-        return executionLogRepository.findByPlanId(planId);
+        return toExecutionLogResponses(executionLogRepository.findByPlanId(planId));
     }
 
     @GetMapping("/{planId}/actions/{actionId}/logs")
-    public List<TaskExecutionLogEntity> actionLogs(@PathVariable String planId,
-                                                   @PathVariable String actionId,
-                                                   @RequestParam(required = false) String userId) {
+    public List<TaskExecutionLogResponse> actionLogs(@PathVariable String planId,
+                                                     @PathVariable String actionId,
+                                                     @RequestParam(required = false) String userId) {
         aiTaskService.get(planId, userId);
-        return executionLogRepository.findByPlanIdAndActionId(planId, actionId);
+        return toExecutionLogResponses(executionLogRepository.findByPlanIdAndActionId(planId, actionId));
     }
 
     @GetMapping("/{planId}/dispatch-records")
@@ -202,6 +205,10 @@ public class AiTaskController {
                                      @RequestParam(required = false) Long page,
                                      @RequestParam(required = false) Long size) {
         return aiTaskService.list(userId, page, size);
+    }
+
+    private List<TaskExecutionLogResponse> toExecutionLogResponses(List<TaskExecutionLogEntity> logs) {
+        return logs.stream().map(TaskExecutionLogResponse::from).toList();
     }
 
     private PageResult<TaskDispatchRecordResponse> toDispatchRecordResponsePage(PageResult<TaskDispatchRecordEntity> page) {

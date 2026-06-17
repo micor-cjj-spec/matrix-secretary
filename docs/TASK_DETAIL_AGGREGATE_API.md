@@ -19,9 +19,26 @@ TaskDetailResponse
 | 字段 | 说明 |
 |---|---|
 | `plan` | 任务计划详情，包含 actions |
-| `recentExecutionLogs` | 最近执行日志 |
+| `recentExecutionLogs` | 最近执行日志 DTO |
 | `recentDispatchRecords` | 最近调度记录 DTO |
 | `dispatchSummary` | 调度状态摘要 |
+
+## recentExecutionLogs
+
+`recentExecutionLogs` 返回 `TaskExecutionLogResponse` 列表。
+
+| 字段 | 说明 |
+|---|---|
+| `id` | 执行日志 ID |
+| `planId` | 任务计划 ID |
+| `actionId` | 任务动作 ID |
+| `skillName` | 技能名称 |
+| `status` | 执行状态 |
+| `requestPayload` | 请求载荷 JSON |
+| `responsePayload` | 响应载荷 JSON |
+| `errorMessage` | 错误信息 |
+| `operatorUserId` | 操作用户 ID |
+| `createdAt` | 创建时间 |
 
 ## dispatchSummary
 
@@ -55,8 +72,8 @@ TaskDispatchSummaryResponse(
 
 ```text
 plan -> AiTaskService.get(planId, userId)
-recentExecutionLogs -> TaskExecutionLogRepository.findRecentByPlanId(planId, recentLogSize)
-recentDispatchRecords -> TaskDispatchRecordRepository.findByPlanId(planId, page=1, size=recentDispatchSize)
+recentExecutionLogs -> TaskExecutionLogRepository.findRecentByPlanId(planId, recentLogSize) -> TaskExecutionLogResponse
+recentDispatchRecords -> TaskDispatchRecordRepository.findByPlanId(planId, page=1, size=recentDispatchSize) -> TaskDispatchRecordResponse
 dispatchSummary -> TaskDispatchRecordRepository.summarizeByPlanId(planId)
 ```
 
@@ -70,9 +87,24 @@ aiTaskService.get(planId, userId)
 
 因此传入 `userId` 时，沿用任务计划已有用户隔离逻辑。
 
+## 相关日志接口
+
+以下接口也已经返回 DTO：
+
+```http
+GET /api/ai-task/{planId}/logs
+GET /api/ai-task/{planId}/actions/{actionId}/logs
+```
+
+返回：
+
+```java
+List<TaskExecutionLogResponse>
+```
+
 ## 当前边界
 
-1. `recentExecutionLogs` 当前仍直接返回 `TaskExecutionLogEntity`，后续可以继续 DTO 化。
+1. `requestPayload` 和 `responsePayload` 当前仍以 JSON 字符串返回，后续可以改为结构化 JSON 对象。
 2. `dispatchSummary` 当前只统计 total/running/succeeded/failed，暂未统计 retry exhausted、retry scheduled 等细分状态。
 3. 聚合接口默认只拿最近 N 条日志和调度记录，不替代完整分页查询接口。
 
@@ -80,7 +112,7 @@ aiTaskService.get(planId, userId)
 
 继续生产化建议：
 
-1. 为 execution log 增加 DTO。
-2. 扩展 dispatchSummary，增加 retryScheduled、retryExhausted、successRate。
-3. 在详情页展示最近一次 dispatch record 摘要。
-4. 增加 Prometheus 指标和管理端统计接口。
+1. 扩展 dispatchSummary，增加 retryScheduled、retryExhausted、successRate。
+2. 在详情页展示最近一次 dispatch record 摘要。
+3. 增加 Prometheus 指标和管理端统计接口。
+4. 将 requestPayload/responsePayload 从字符串升级为结构化对象。
