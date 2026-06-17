@@ -34,7 +34,7 @@ management:
         include: health,info,prometheus
   endpoint:
     prometheus:
-      access: read_only
+      enabled: true
   metrics:
     tags:
       application: ${spring.application.name}
