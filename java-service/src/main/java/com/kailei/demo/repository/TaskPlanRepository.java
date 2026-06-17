@@ -80,10 +80,17 @@ public class TaskPlanRepository {
     }
 
     public PageResult<TaskActionEntity> findDueScheduledActions(OffsetDateTime now, long page, long size) {
+        return findDispatchLeaseCandidates(now, page, size);
+    }
+
+    public PageResult<TaskActionEntity> findDispatchLeaseCandidates(OffsetDateTime now, long page, long size) {
         LambdaQueryWrapper<TaskActionEntity> wrapper = new LambdaQueryWrapper<TaskActionEntity>()
                 .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
                 .isNotNull(TaskActionEntity::getNextRunAt)
                 .le(TaskActionEntity::getNextRunAt, now)
+                .and(lock -> lock.isNull(TaskActionEntity::getDispatchLockedUntil)
+                        .or()
+                        .le(TaskActionEntity::getDispatchLockedUntil, now))
                 .orderByAsc(TaskActionEntity::getNextRunAt)
                 .orderByAsc(TaskActionEntity::getSortOrder);
         Page<TaskActionEntity> actionPage = taskActionMapper.selectPage(new Page<>(page, size), wrapper);
@@ -171,6 +178,9 @@ public class TaskPlanRepository {
         entity.setNextRunAt(parseOffsetDateTime(schedule == null ? null : schedule.effectiveRunAt()));
         entity.setLastRunAt(parseOffsetDateTime(schedule == null ? null : schedule.lastRunAt()));
         entity.setTriggerCount(schedule == null ? 0 : schedule.triggerCount());
+        entity.setDispatchLockedUntil(null);
+        entity.setDispatchOwner(null);
+        entity.setDispatchAttempt(0);
         entity.setExecutionNote(limit(action.executionNote(), 512));
         entity.setSortOrder(sortOrder);
         return entity;
