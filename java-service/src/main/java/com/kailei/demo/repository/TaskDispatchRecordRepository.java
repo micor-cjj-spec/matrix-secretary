@@ -44,10 +44,20 @@ public class TaskDispatchRecordRepository {
     }
 
     public PageResult<TaskDispatchRecordEntity> findByPlanId(String planId, Long page, Long size) {
+        return findByPlanId(planId, null, null, null, null, page, size);
+    }
+
+    public PageResult<TaskDispatchRecordEntity> findByPlanId(String planId,
+                                                             String status,
+                                                             OffsetDateTime startTime,
+                                                             OffsetDateTime endTime,
+                                                             String dispatchOwner,
+                                                             Long page,
+                                                             Long size) {
         LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper = new LambdaQueryWrapper<TaskDispatchRecordEntity>()
-                .eq(TaskDispatchRecordEntity::getPlanId, planId)
-                .orderByDesc(TaskDispatchRecordEntity::getTriggerAt)
-                .orderByDesc(TaskDispatchRecordEntity::getCreatedAt);
+                .eq(TaskDispatchRecordEntity::getPlanId, planId);
+        applyQueryFilters(wrapper, status, startTime, endTime, dispatchOwner);
+        applyDefaultOrder(wrapper);
         return toPageResult(mapper.selectPage(
                 new Page<>(PageResult.normalizePage(page), PageResult.normalizeSize(size)),
                 wrapper
@@ -58,15 +68,50 @@ public class TaskDispatchRecordRepository {
                                                                         String actionId,
                                                                         Long page,
                                                                         Long size) {
+        return findByPlanIdAndActionId(planId, actionId, null, null, null, null, page, size);
+    }
+
+    public PageResult<TaskDispatchRecordEntity> findByPlanIdAndActionId(String planId,
+                                                                        String actionId,
+                                                                        String status,
+                                                                        OffsetDateTime startTime,
+                                                                        OffsetDateTime endTime,
+                                                                        String dispatchOwner,
+                                                                        Long page,
+                                                                        Long size) {
         LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper = new LambdaQueryWrapper<TaskDispatchRecordEntity>()
                 .eq(TaskDispatchRecordEntity::getPlanId, planId)
-                .eq(TaskDispatchRecordEntity::getActionId, actionId)
-                .orderByDesc(TaskDispatchRecordEntity::getTriggerAt)
-                .orderByDesc(TaskDispatchRecordEntity::getCreatedAt);
+                .eq(TaskDispatchRecordEntity::getActionId, actionId);
+        applyQueryFilters(wrapper, status, startTime, endTime, dispatchOwner);
+        applyDefaultOrder(wrapper);
         return toPageResult(mapper.selectPage(
                 new Page<>(PageResult.normalizePage(page), PageResult.normalizeSize(size)),
                 wrapper
         ));
+    }
+
+    private void applyQueryFilters(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
+                                   String status,
+                                   OffsetDateTime startTime,
+                                   OffsetDateTime endTime,
+                                   String dispatchOwner) {
+        if (status != null && !status.isBlank()) {
+            wrapper.eq(TaskDispatchRecordEntity::getStatus, status.trim().toUpperCase());
+        }
+        if (startTime != null) {
+            wrapper.ge(TaskDispatchRecordEntity::getTriggerAt, startTime);
+        }
+        if (endTime != null) {
+            wrapper.le(TaskDispatchRecordEntity::getTriggerAt, endTime);
+        }
+        if (dispatchOwner != null && !dispatchOwner.isBlank()) {
+            wrapper.eq(TaskDispatchRecordEntity::getDispatchOwner, dispatchOwner.trim());
+        }
+    }
+
+    private void applyDefaultOrder(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper) {
+        wrapper.orderByDesc(TaskDispatchRecordEntity::getTriggerAt)
+                .orderByDesc(TaskDispatchRecordEntity::getCreatedAt);
     }
 
     public boolean hasSucceeded(String idempotencyKey) {

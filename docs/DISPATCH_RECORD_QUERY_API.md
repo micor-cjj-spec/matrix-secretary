@@ -8,10 +8,16 @@
 GET /api/ai-task/{planId}/dispatch-records?page=1&size=20&userId=xxx
 ```
 
+支持过滤参数：
+
+```http
+GET /api/ai-task/{planId}/dispatch-records?status=FAILED&startTime=2026-06-17T00:00:00%2B08:00&endTime=2026-06-18T00:00:00%2B08:00&dispatchOwner=local-scheduler
+```
+
 返回：
 
 ```java
-PageResult<TaskDispatchRecordEntity>
+PageResult<TaskDispatchRecordResponse>
 ```
 
 排序：
@@ -26,10 +32,21 @@ trigger_at DESC, created_at DESC
 GET /api/ai-task/{planId}/actions/{actionId}/dispatch-records?page=1&size=20&userId=xxx
 ```
 
+同样支持：
+
+```text
+status
+startTime
+endTime
+dispatchOwner
+page
+size
+```
+
 返回：
 
 ```java
-PageResult<TaskDispatchRecordEntity>
+PageResult<TaskDispatchRecordResponse>
 ```
 
 排序：
@@ -38,12 +55,32 @@ PageResult<TaskDispatchRecordEntity>
 trigger_at DESC, created_at DESC
 ```
 
-## 可展示字段
+## 过滤语义
 
-前端任务详情页建议展示：
+| 参数 | 说明 |
+|---|---|
+| `status` | 调度记录状态，自动转大写，例如 `running` 会按 `RUNNING` 查询 |
+| `startTime` | 触发时间下界，对应 `trigger_at >= startTime` |
+| `endTime` | 触发时间上界，对应 `trigger_at <= endTime` |
+| `dispatchOwner` | 调度实例标识，精确匹配 |
+
+`startTime` 和 `endTime` 使用 ISO DateTime，例如：
+
+```text
+2026-06-17T00:00:00+08:00
+```
+
+URL 中的 `+` 需要编码为 `%2B`。
+
+## DTO 字段
+
+接口不再直接返回数据库 Entity，而是返回 `TaskDispatchRecordResponse`。
 
 | 字段 | 说明 |
 |---|---|
+| `id` | 调度记录 ID |
+| `planId` | 任务计划 ID |
+| `actionId` | 任务动作 ID |
 | `status` | `RUNNING` / `SUCCEEDED` / `FAILED` |
 | `triggerAt` | 本次触发时间 |
 | `startedAt` | 开始执行时间 |
@@ -54,6 +91,8 @@ trigger_at DESC, created_at DESC
 | `nextRetryAt` | 下一次允许重试时间 |
 | `errorMessage` | 失败原因 |
 | `idempotencyKey` | 幂等键，便于排查重复执行 |
+| `createdAt` | 创建时间 |
+| `updatedAt` | 更新时间 |
 
 ## 访问控制
 
@@ -68,21 +107,21 @@ aiTaskService.get(planId, userId)
 ## Repository 能力
 
 ```java
-findByPlanId(planId, page, size)
-findByPlanIdAndActionId(planId, actionId, page, size)
+findByPlanId(planId, status, startTime, endTime, dispatchOwner, page, size)
+findByPlanIdAndActionId(planId, actionId, status, startTime, endTime, dispatchOwner, page, size)
 ```
 
 ## 当前边界
 
-1. 当前返回实体对象，后续可以改成更稳定的 DTO，避免直接暴露内部表结构。
-2. 当前只支持按 plan/action 查询，暂未支持按状态、时间范围、owner 过滤。
-3. 当前没有单独的调度记录详情接口。
+1. 当前 `startTime/endTime` 过滤的是 `trigger_at`，不是 `started_at`。
+2. 当前没有单独的调度记录详情接口。
+3. 当前没有汇总统计，例如成功率、失败次数、重试耗时分布。
 
 ## 下一步
 
 继续生产化建议：
 
-1. 增加 DTO，屏蔽内部字段。
-2. 支持 `status`、`startTime`、`endTime`、`dispatchOwner` 查询条件。
-3. 在任务详情页展示最近一次 dispatch record 摘要。
-4. 增加调度指标接口或 Prometheus 指标。
+1. 在任务详情页展示最近一次 dispatch record 摘要。
+2. 增加调度记录详情接口。
+3. 增加调度指标接口或 Prometheus 指标。
+4. 增加按 `startedAt/finishedAt` 的执行时间范围过滤。

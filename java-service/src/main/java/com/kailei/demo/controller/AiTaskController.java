@@ -10,11 +10,13 @@ import com.kailei.demo.model.PageResult;
 import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.RetryTaskRequest;
 import com.kailei.demo.model.SessionState;
+import com.kailei.demo.model.TaskDispatchRecordResponse;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.repository.TaskDispatchRecordRepository;
 import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.service.AiTaskService;
 import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 
 @RestController
@@ -99,22 +102,55 @@ public class AiTaskController {
     }
 
     @GetMapping("/{planId}/dispatch-records")
-    public PageResult<TaskDispatchRecordEntity> dispatchRecords(@PathVariable String planId,
-                                                                @RequestParam(required = false) String userId,
-                                                                @RequestParam(required = false) Long page,
-                                                                @RequestParam(required = false) Long size) {
+    public PageResult<TaskDispatchRecordResponse> dispatchRecords(@PathVariable String planId,
+                                                                  @RequestParam(required = false) String userId,
+                                                                  @RequestParam(required = false) String status,
+                                                                  @RequestParam(required = false)
+                                                                  @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+                                                                  OffsetDateTime startTime,
+                                                                  @RequestParam(required = false)
+                                                                  @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+                                                                  OffsetDateTime endTime,
+                                                                  @RequestParam(required = false) String dispatchOwner,
+                                                                  @RequestParam(required = false) Long page,
+                                                                  @RequestParam(required = false) Long size) {
         aiTaskService.get(planId, userId);
-        return dispatchRecordRepository.findByPlanId(planId, page, size);
+        return toDispatchRecordResponsePage(dispatchRecordRepository.findByPlanId(
+                planId,
+                status,
+                startTime,
+                endTime,
+                dispatchOwner,
+                page,
+                size
+        ));
     }
 
     @GetMapping("/{planId}/actions/{actionId}/dispatch-records")
-    public PageResult<TaskDispatchRecordEntity> actionDispatchRecords(@PathVariable String planId,
-                                                                      @PathVariable String actionId,
-                                                                      @RequestParam(required = false) String userId,
-                                                                      @RequestParam(required = false) Long page,
-                                                                      @RequestParam(required = false) Long size) {
+    public PageResult<TaskDispatchRecordResponse> actionDispatchRecords(@PathVariable String planId,
+                                                                        @PathVariable String actionId,
+                                                                        @RequestParam(required = false) String userId,
+                                                                        @RequestParam(required = false) String status,
+                                                                        @RequestParam(required = false)
+                                                                        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+                                                                        OffsetDateTime startTime,
+                                                                        @RequestParam(required = false)
+                                                                        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+                                                                        OffsetDateTime endTime,
+                                                                        @RequestParam(required = false) String dispatchOwner,
+                                                                        @RequestParam(required = false) Long page,
+                                                                        @RequestParam(required = false) Long size) {
         aiTaskService.get(planId, userId);
-        return dispatchRecordRepository.findByPlanIdAndActionId(planId, actionId, page, size);
+        return toDispatchRecordResponsePage(dispatchRecordRepository.findByPlanIdAndActionId(
+                planId,
+                actionId,
+                status,
+                startTime,
+                endTime,
+                dispatchOwner,
+                page,
+                size
+        ));
     }
 
     @GetMapping("/sessions/{sessionId}")
@@ -136,5 +172,15 @@ public class AiTaskController {
                                      @RequestParam(required = false) Long page,
                                      @RequestParam(required = false) Long size) {
         return aiTaskService.list(userId, page, size);
+    }
+
+    private PageResult<TaskDispatchRecordResponse> toDispatchRecordResponsePage(PageResult<TaskDispatchRecordEntity> page) {
+        return new PageResult<>(
+                page.records().stream().map(TaskDispatchRecordResponse::from).toList(),
+                page.total(),
+                page.page(),
+                page.size(),
+                page.pages()
+        );
     }
 }
