@@ -47,6 +47,7 @@ public class AiTaskService {
     private final AiSessionRepository sessionRepository;
     private final TaskStateMachineService stateMachine;
     private final TaskDispatchRecordRepository dispatchRecordRepository;
+    private final TaskDispatchMetrics dispatchMetrics;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
@@ -56,7 +57,8 @@ public class AiTaskService {
                          TaskExecutionLogRepository executionLogRepository,
                          AiSessionRepository sessionRepository,
                          TaskStateMachineService stateMachine,
-                         TaskDispatchRecordRepository dispatchRecordRepository) {
+                         TaskDispatchRecordRepository dispatchRecordRepository,
+                         TaskDispatchMetrics dispatchMetrics) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
@@ -66,6 +68,7 @@ public class AiTaskService {
         this.sessionRepository = sessionRepository;
         this.stateMachine = stateMachine;
         this.dispatchRecordRepository = dispatchRecordRepository;
+        this.dispatchMetrics = dispatchMetrics;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
@@ -357,12 +360,15 @@ public class AiTaskService {
         long normalizedRetryBackoffSeconds = normalizeRetryBackoffSeconds(retryBackoffSeconds);
         OffsetDateTime timeoutBefore = OffsetDateTime.now().minusSeconds(normalizedTimeoutSeconds);
         String message = "调度记录 RUNNING 超时，已自动标记失败: timeoutSeconds=" + normalizedTimeoutSeconds;
-        return dispatchRecordRepository.markTimedOutRunningRecordsAsFailed(
+        int recovered = dispatchRecordRepository.markTimedOutRunningRecordsAsFailed(
                 timeoutBefore,
                 normalizedBatchSize,
                 message,
                 normalizedRetryBackoffSeconds
         );
+        dispatchMetrics.incrementTimeoutRecovered(recovered);
+        dispatchMetrics.incrementFailed(recovered);
+        return recovered;
     }
 
     private void dispatchDueAction(TaskActionEntity dueAction,
@@ -386,8 +392,13 @@ public class AiTaskService {
         if (dispatchRecordRepository.hasSucceeded(idempotencyKey)) {
             return;
         }
+        boolean existingDispatchRecord = dispatchRecordRepository.findByIdempotencyKey(idempotencyKey).isPresent();
         if (!dispatchRecordRepository.tryStartOrRetry(dueAction.getPlanId(), dueAction.getActionId(), triggerAt, owner, maxRetryCount)) {
             return;
+        }
+        dispatchMetrics.incrementStarted();
+        if (existingDispatchRecord) {
+            dispatchMetrics.incrementRetryStarted();
         }
 
         try {
@@ -395,12 +406,18 @@ public class AiTaskService {
                     .map(plan -> dispatchDueAction(plan, dueAction.getActionId(), now))
                     .orElseGet(() -> DispatchResult.failed("任务计划不存在: " + dueAction.getPlanId()));
             if (result.status() == TaskStatus.FAILED) {
-                dispatchRecordRepository.markFailed(idempotencyKey, result.note(), retryBackoffSeconds);
+                if (dispatchRecordRepository.markFailed(idempotencyKey, result.note(), retryBackoffSeconds)) {
+                    dispatchMetrics.incrementFailed();
+                }
                 return;
             }
-            dispatchRecordRepository.markSucceeded(idempotencyKey);
+            if (dispatchRecordRepository.markSucceeded(idempotencyKey)) {
+                dispatchMetrics.incrementSucceeded();
+            }
         } catch (RuntimeException ex) {
-            dispatchRecordRepository.markFailed(idempotencyKey, ex.getMessage(), retryBackoffSeconds);
+            if (dispatchRecordRepository.markFailed(idempotencyKey, ex.getMessage(), retryBackoffSeconds)) {
+                dispatchMetrics.incrementFailed();
+            }
             throw ex;
         }
     }
