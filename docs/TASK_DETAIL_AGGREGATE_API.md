@@ -47,7 +47,13 @@ TaskDispatchSummaryResponse(
     total,
     running,
     succeeded,
-    failed
+    failed,
+    retryScheduled,
+    retryExhausted,
+    successRate,
+    latestStatus,
+    latestTriggerAt,
+    latestFinishedAt
 )
 ```
 
@@ -59,6 +65,12 @@ TaskDispatchSummaryResponse(
 | `running` | RUNNING 数量 |
 | `succeeded` | SUCCEEDED 数量 |
 | `failed` | FAILED 数量 |
+| `retryScheduled` | FAILED 且还有重试额度的数量 |
+| `retryExhausted` | FAILED 且重试次数已达到上限的数量 |
+| `successRate` | 成功率百分比，等于 `succeeded / total * 100` |
+| `latestStatus` | 最近一次 dispatch record 状态 |
+| `latestTriggerAt` | 最近一次 dispatch record 触发时间 |
+| `latestFinishedAt` | 最近一次 dispatch record 结束时间 |
 
 ## 参数
 
@@ -105,14 +117,15 @@ List<TaskExecutionLogResponse>
 ## 当前边界
 
 1. `requestPayload` 和 `responsePayload` 当前仍以 JSON 字符串返回，后续可以改为结构化 JSON 对象。
-2. `dispatchSummary` 当前只统计 total/running/succeeded/failed，暂未统计 retry exhausted、retry scheduled 等细分状态。
-3. 聚合接口默认只拿最近 N 条日志和调度记录，不替代完整分页查询接口。
+2. `retryScheduled` 当前统计 FAILED 且还有重试额度的记录，不区分 `nextRetryAt` 是否已经到期。
+3. `latestStatus/latestTriggerAt/latestFinishedAt` 基于 `triggerAt DESC, createdAt DESC` 选取最近记录。
+4. 聚合接口默认只拿最近 N 条日志和调度记录，不替代完整分页查询接口。
 
 ## 下一步
 
 继续生产化建议：
 
-1. 扩展 dispatchSummary，增加 retryScheduled、retryExhausted、successRate。
-2. 在详情页展示最近一次 dispatch record 摘要。
-3. 增加 Prometheus 指标和管理端统计接口。
-4. 将 requestPayload/responsePayload 从字符串升级为结构化对象。
+1. 增加 Prometheus 指标和管理端统计接口。
+2. 将 requestPayload/responsePayload 从字符串升级为结构化对象。
+3. 增加 retry due / retry pending 细分指标。
+4. 增加按 skill/action 维度的调度成功率统计。
