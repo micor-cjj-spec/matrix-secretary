@@ -5,6 +5,7 @@ import com.kailei.demo.model.CancelTaskRequest;
 import com.kailei.demo.model.ConfirmTaskRequest;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
+import com.kailei.demo.model.PageResult;
 import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.RetryTaskRequest;
 import com.kailei.demo.model.SessionState;
@@ -99,13 +100,17 @@ public class AiTaskController {
     }
 
     @GetMapping("/sessions/{sessionId}/plans")
-    public List<TaskPlan> listSessionPlans(@PathVariable String sessionId,
-                                           @RequestParam(required = false) String userId) {
-        return aiTaskService.listBySession(sessionId, userId);
+    public PageResult<TaskPlan> listSessionPlans(@PathVariable String sessionId,
+                                                 @RequestParam(required = false) String userId,
+                                                 @RequestParam(required = false) Long page,
+                                                 @RequestParam(required = false) Long size) {
+        return aiTaskService.listBySession(sessionId, userId, page, size);
     }
 
     @GetMapping
-    public List<TaskPlan> list(@RequestParam(required = false) String userId) {
-        return aiTaskService.list(userId);
+    public PageResult<TaskPlan> list(@RequestParam(required = false) String userId,
+                                     @RequestParam(required = false) Long page,
+                                     @RequestParam(required = false) Long size) {
+        return aiTaskService.list(userId, page, size);
     }
 }
