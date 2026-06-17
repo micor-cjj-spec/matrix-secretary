@@ -43,6 +43,12 @@ public class TaskDispatchMetrics {
         failedCounter.increment();
     }
 
+    public void incrementFailed(int count) {
+        if (count > 0) {
+            failedCounter.increment(count);
+        }
+    }
+
     public void incrementRetryStarted() {
         retryStartedCounter.increment();
     }
