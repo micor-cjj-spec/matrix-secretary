@@ -33,6 +33,8 @@ public class AiTaskService {
     private static final String SYSTEM_OPERATOR = "system-scheduler";
     private static final long DEFAULT_DISPATCH_PAGE_SIZE = 50;
     private static final long DEFAULT_DISPATCH_LEASE_SECONDS = 60;
+    private static final long DEFAULT_RUNNING_TIMEOUT_SECONDS = 300;
+    private static final long DEFAULT_RECOVERY_BATCH_SIZE = 50;
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
@@ -306,6 +308,18 @@ public class AiTaskService {
         String normalizedOwner = owner == null || owner.isBlank() ? SYSTEM_OPERATOR : owner;
         PageResult<TaskActionEntity> dueActions = repository.findDueScheduledActions(now, 1, normalizedSize);
         dueActions.records().forEach(action -> dispatchDueAction(action, now, normalizedLeaseSeconds, normalizedOwner));
+    }
+
+    public int recoverTimedOutDispatchRecords(Long runningTimeoutSeconds, Long recoveryBatchSize) {
+        long normalizedTimeoutSeconds = runningTimeoutSeconds == null || runningTimeoutSeconds < 1
+                ? DEFAULT_RUNNING_TIMEOUT_SECONDS
+                : runningTimeoutSeconds;
+        long normalizedBatchSize = recoveryBatchSize == null || recoveryBatchSize < 1
+                ? DEFAULT_RECOVERY_BATCH_SIZE
+                : recoveryBatchSize;
+        OffsetDateTime timeoutBefore = OffsetDateTime.now().minusSeconds(normalizedTimeoutSeconds);
+        String message = "调度记录 RUNNING 超时，已自动标记失败: timeoutSeconds=" + normalizedTimeoutSeconds;
+        return dispatchRecordRepository.markTimedOutRunningRecordsAsFailed(timeoutBefore, normalizedBatchSize, message);
     }
 
     private void dispatchDueAction(TaskActionEntity dueAction,
