@@ -1,6 +1,7 @@
 package com.kailei.demo.repository;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -8,6 +9,7 @@ import com.kailei.demo.entity.TaskActionEntity;
 import com.kailei.demo.entity.TaskPlanEntity;
 import com.kailei.demo.mapper.TaskActionMapper;
 import com.kailei.demo.mapper.TaskPlanMapper;
+import com.kailei.demo.model.PageResult;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.model.TaskSchedule;
@@ -66,6 +68,15 @@ public class TaskPlanRepository {
                 .toList();
     }
 
+    public PageResult<TaskPlan> findPage(String userId, long page, long size) {
+        LambdaQueryWrapper<TaskPlanEntity> wrapper = new LambdaQueryWrapper<TaskPlanEntity>()
+                .orderByDesc(TaskPlanEntity::getCreatedAt);
+        if (userId != null && !userId.isBlank()) {
+            wrapper.eq(TaskPlanEntity::getUserId, userId);
+        }
+        return toPageResult(taskPlanMapper.selectPage(new Page<>(page, size), wrapper));
+    }
+
     public List<TaskPlan> findByUserId(String userId) {
         return taskPlanMapper.selectList(new LambdaQueryWrapper<TaskPlanEntity>()
                         .eq(TaskPlanEntity::getUserId, userId)
@@ -86,6 +97,23 @@ public class TaskPlanRepository {
                 .stream()
                 .map(planEntity -> toDomain(planEntity, findActions(planEntity.getPlanId())))
                 .toList();
+    }
+
+    public PageResult<TaskPlan> findByUserIdAndSessionId(String userId, String sessionId, long page, long size) {
+        LambdaQueryWrapper<TaskPlanEntity> wrapper = new LambdaQueryWrapper<TaskPlanEntity>()
+                .eq(TaskPlanEntity::getSessionId, sessionId)
+                .orderByDesc(TaskPlanEntity::getCreatedAt);
+        if (userId != null && !userId.isBlank()) {
+            wrapper.eq(TaskPlanEntity::getUserId, userId);
+        }
+        return toPageResult(taskPlanMapper.selectPage(new Page<>(page, size), wrapper));
+    }
+
+    private PageResult<TaskPlan> toPageResult(Page<TaskPlanEntity> page) {
+        List<TaskPlan> records = page.getRecords().stream()
+                .map(planEntity -> toDomain(planEntity, findActions(planEntity.getPlanId())))
+                .toList();
+        return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
     private List<TaskActionEntity> findActions(String planId) {

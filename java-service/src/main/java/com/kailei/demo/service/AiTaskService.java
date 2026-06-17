@@ -4,6 +4,7 @@ import com.kailei.demo.client.PythonSemanticClient;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.ExecutionSummary;
+import com.kailei.demo.model.PageResult;
 import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskAction;
@@ -244,6 +245,10 @@ public class AiTaskService {
         return plan;
     }
 
+    public PageResult<TaskPlan> list(String userId, Long page, Long size) {
+        return repository.findPage(userId, PageResult.normalizePage(page), PageResult.normalizeSize(size));
+    }
+
     public List<TaskPlan> list(String userId) {
         if (userId == null || userId.isBlank()) {
             return repository.findAll();
@@ -262,6 +267,16 @@ public class AiTaskService {
             throw new IllegalArgumentException("会话不存在或无权访问: " + sessionId);
         }
         return session;
+    }
+
+    public PageResult<TaskPlan> listBySession(String sessionId, String userId, Long page, Long size) {
+        getSession(sessionId, userId);
+        return repository.findByUserIdAndSessionId(
+                userId,
+                sessionId,
+                PageResult.normalizePage(page),
+                PageResult.normalizeSize(size)
+        );
     }
 
     public List<TaskPlan> listBySession(String sessionId, String userId) {

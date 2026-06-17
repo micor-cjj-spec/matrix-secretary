@@ -59,6 +59,11 @@
             <version>${mybatis-plus.version}</version>
         </dependency>
         <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.dromara.autotable</groupId>
             <artifactId>auto-table-spring-boot-starter</artifactId>
             <version>${auto-table.version}</version>
