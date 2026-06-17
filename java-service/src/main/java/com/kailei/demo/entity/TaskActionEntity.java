@@ -92,6 +92,17 @@ public class TaskActionEntity {
     @ColumnComment("已触发次数")
     private Integer triggerCount;
 
+    @Index
+    @ColumnComment("调度锁过期时间")
+    private OffsetDateTime dispatchLockedUntil;
+
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 128)
+    @ColumnComment("调度锁持有者")
+    private String dispatchOwner;
+
+    @ColumnComment("调度抢占次数")
+    private Integer dispatchAttempt;
+
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 512)
     @ColumnComment("执行说明")
     private String executionNote;
@@ -137,6 +148,12 @@ public class TaskActionEntity {
     public void setLastRunAt(OffsetDateTime lastRunAt) { this.lastRunAt = lastRunAt; }
     public Integer getTriggerCount() { return triggerCount; }
     public void setTriggerCount(Integer triggerCount) { this.triggerCount = triggerCount; }
+    public OffsetDateTime getDispatchLockedUntil() { return dispatchLockedUntil; }
+    public void setDispatchLockedUntil(OffsetDateTime dispatchLockedUntil) { this.dispatchLockedUntil = dispatchLockedUntil; }
+    public String getDispatchOwner() { return dispatchOwner; }
+    public void setDispatchOwner(String dispatchOwner) { this.dispatchOwner = dispatchOwner; }
+    public Integer getDispatchAttempt() { return dispatchAttempt; }
+    public void setDispatchAttempt(Integer dispatchAttempt) { this.dispatchAttempt = dispatchAttempt; }
     public String getExecutionNote() { return executionNote; }
     public void setExecutionNote(String executionNote) { this.executionNote = executionNote; }
     public Integer getSortOrder() { return sortOrder; }
