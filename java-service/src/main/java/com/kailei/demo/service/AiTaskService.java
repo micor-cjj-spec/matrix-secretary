@@ -35,6 +35,8 @@ public class AiTaskService {
     private static final long DEFAULT_DISPATCH_LEASE_SECONDS = 60;
     private static final long DEFAULT_RUNNING_TIMEOUT_SECONDS = 300;
     private static final long DEFAULT_RECOVERY_BATCH_SIZE = 50;
+    private static final int DEFAULT_MAX_RETRY_COUNT = 3;
+    private static final long DEFAULT_RETRY_BACKOFF_SECONDS = 60;
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
@@ -294,38 +296,81 @@ public class AiTaskService {
     }
 
     public void dispatchDueOnceTasks() {
-        dispatchDueOnceTasks(DEFAULT_DISPATCH_PAGE_SIZE, DEFAULT_DISPATCH_LEASE_SECONDS, SYSTEM_OPERATOR);
+        dispatchDueOnceTasks(
+                DEFAULT_DISPATCH_PAGE_SIZE,
+                DEFAULT_DISPATCH_LEASE_SECONDS,
+                SYSTEM_OPERATOR,
+                DEFAULT_MAX_RETRY_COUNT,
+                DEFAULT_RETRY_BACKOFF_SECONDS
+        );
     }
 
     public void dispatchDueOnceTasks(Long pageSize) {
-        dispatchDueOnceTasks(pageSize, DEFAULT_DISPATCH_LEASE_SECONDS, SYSTEM_OPERATOR);
+        dispatchDueOnceTasks(
+                pageSize,
+                DEFAULT_DISPATCH_LEASE_SECONDS,
+                SYSTEM_OPERATOR,
+                DEFAULT_MAX_RETRY_COUNT,
+                DEFAULT_RETRY_BACKOFF_SECONDS
+        );
     }
 
     public void dispatchDueOnceTasks(Long pageSize, Long leaseSeconds, String owner) {
+        dispatchDueOnceTasks(pageSize, leaseSeconds, owner, DEFAULT_MAX_RETRY_COUNT, DEFAULT_RETRY_BACKOFF_SECONDS);
+    }
+
+    public void dispatchDueOnceTasks(Long pageSize,
+                                     Long leaseSeconds,
+                                     String owner,
+                                     Integer maxRetryCount,
+                                     Long retryBackoffSeconds) {
         OffsetDateTime now = OffsetDateTime.now();
         long normalizedSize = PageResult.normalizeSize(pageSize);
         long normalizedLeaseSeconds = leaseSeconds == null || leaseSeconds < 1 ? DEFAULT_DISPATCH_LEASE_SECONDS : leaseSeconds;
         String normalizedOwner = owner == null || owner.isBlank() ? SYSTEM_OPERATOR : owner;
+        int normalizedMaxRetryCount = normalizeMaxRetryCount(maxRetryCount);
+        long normalizedRetryBackoffSeconds = normalizeRetryBackoffSeconds(retryBackoffSeconds);
         PageResult<TaskActionEntity> dueActions = repository.findDueScheduledActions(now, 1, normalizedSize);
-        dueActions.records().forEach(action -> dispatchDueAction(action, now, normalizedLeaseSeconds, normalizedOwner));
+        dueActions.records().forEach(action -> dispatchDueAction(
+                action,
+                now,
+                normalizedLeaseSeconds,
+                normalizedOwner,
+                normalizedMaxRetryCount,
+                normalizedRetryBackoffSeconds
+        ));
     }
 
     public int recoverTimedOutDispatchRecords(Long runningTimeoutSeconds, Long recoveryBatchSize) {
+        return recoverTimedOutDispatchRecords(runningTimeoutSeconds, recoveryBatchSize, DEFAULT_RETRY_BACKOFF_SECONDS);
+    }
+
+    public int recoverTimedOutDispatchRecords(Long runningTimeoutSeconds,
+                                              Long recoveryBatchSize,
+                                              Long retryBackoffSeconds) {
         long normalizedTimeoutSeconds = runningTimeoutSeconds == null || runningTimeoutSeconds < 1
                 ? DEFAULT_RUNNING_TIMEOUT_SECONDS
                 : runningTimeoutSeconds;
         long normalizedBatchSize = recoveryBatchSize == null || recoveryBatchSize < 1
                 ? DEFAULT_RECOVERY_BATCH_SIZE
                 : recoveryBatchSize;
+        long normalizedRetryBackoffSeconds = normalizeRetryBackoffSeconds(retryBackoffSeconds);
         OffsetDateTime timeoutBefore = OffsetDateTime.now().minusSeconds(normalizedTimeoutSeconds);
         String message = "调度记录 RUNNING 超时，已自动标记失败: timeoutSeconds=" + normalizedTimeoutSeconds;
-        return dispatchRecordRepository.markTimedOutRunningRecordsAsFailed(timeoutBefore, normalizedBatchSize, message);
+        return dispatchRecordRepository.markTimedOutRunningRecordsAsFailed(
+                timeoutBefore,
+                normalizedBatchSize,
+                message,
+                normalizedRetryBackoffSeconds
+        );
     }
 
     private void dispatchDueAction(TaskActionEntity dueAction,
                                    OffsetDateTime now,
                                    long leaseSeconds,
-                                   String owner) {
+                                   String owner,
+                                   int maxRetryCount,
+                                   long retryBackoffSeconds) {
         OffsetDateTime leaseUntil = now.plusSeconds(leaseSeconds);
         boolean acquired = repository.tryAcquireDispatchLease(dueAction.getActionId(), now, leaseUntil, owner);
         if (!acquired) {
@@ -341,7 +386,7 @@ public class AiTaskService {
         if (dispatchRecordRepository.hasSucceeded(idempotencyKey)) {
             return;
         }
-        if (!dispatchRecordRepository.tryStart(dueAction.getPlanId(), dueAction.getActionId(), triggerAt, owner)) {
+        if (!dispatchRecordRepository.tryStartOrRetry(dueAction.getPlanId(), dueAction.getActionId(), triggerAt, owner, maxRetryCount)) {
             return;
         }
 
@@ -350,12 +395,12 @@ public class AiTaskService {
                     .map(plan -> dispatchDueAction(plan, dueAction.getActionId(), now))
                     .orElseGet(() -> DispatchResult.failed("任务计划不存在: " + dueAction.getPlanId()));
             if (result.status() == TaskStatus.FAILED) {
-                dispatchRecordRepository.markFailed(idempotencyKey, result.note());
+                dispatchRecordRepository.markFailed(idempotencyKey, result.note(), retryBackoffSeconds);
                 return;
             }
             dispatchRecordRepository.markSucceeded(idempotencyKey);
         } catch (RuntimeException ex) {
-            dispatchRecordRepository.markFailed(idempotencyKey, ex.getMessage());
+            dispatchRecordRepository.markFailed(idempotencyKey, ex.getMessage(), retryBackoffSeconds);
             throw ex;
         }
     }
@@ -439,6 +484,20 @@ public class AiTaskService {
         } catch (DateTimeParseException ex) {
             return action.withStatus(TaskStatus.FAILED, "时间格式无法解析: " + schedule.effectiveRunAt());
         }
+    }
+
+    private int normalizeMaxRetryCount(Integer maxRetryCount) {
+        if (maxRetryCount == null || maxRetryCount < 0) {
+            return DEFAULT_MAX_RETRY_COUNT;
+        }
+        return maxRetryCount;
+    }
+
+    private long normalizeRetryBackoffSeconds(Long retryBackoffSeconds) {
+        if (retryBackoffSeconds == null || retryBackoffSeconds < 1) {
+            return DEFAULT_RETRY_BACKOFF_SECONDS;
+        }
+        return retryBackoffSeconds;
     }
 
     private record DispatchResult(TaskStatus status, String note) {

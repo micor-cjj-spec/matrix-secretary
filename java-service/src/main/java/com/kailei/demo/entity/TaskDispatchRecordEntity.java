@@ -61,6 +61,16 @@ public class TaskDispatchRecordEntity {
     @ColumnComment("错误信息")
     private String errorMessage;
 
+    @ColumnComment("重试次数")
+    private Integer retryCount;
+
+    @ColumnComment("最大重试次数")
+    private Integer maxRetryCount;
+
+    @Index
+    @ColumnComment("下一次重试时间")
+    private OffsetDateTime nextRetryAt;
+
     @ColumnComment("创建时间")
     private OffsetDateTime createdAt;
 
@@ -87,6 +97,12 @@ public class TaskDispatchRecordEntity {
     public void setFinishedAt(OffsetDateTime finishedAt) { this.finishedAt = finishedAt; }
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+    public Integer getRetryCount() { return retryCount; }
+    public void setRetryCount(Integer retryCount) { this.retryCount = retryCount; }
+    public Integer getMaxRetryCount() { return maxRetryCount; }
+    public void setMaxRetryCount(Integer maxRetryCount) { this.maxRetryCount = maxRetryCount; }
+    public OffsetDateTime getNextRetryAt() { return nextRetryAt; }
+    public void setNextRetryAt(OffsetDateTime nextRetryAt) { this.nextRetryAt = nextRetryAt; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }

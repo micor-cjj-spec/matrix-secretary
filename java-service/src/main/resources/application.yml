@@ -51,6 +51,8 @@ ai-secretary:
     dispatch-owner: ${AI_SECRETARY_DISPATCH_OWNER:local-scheduler}
     dispatch-running-timeout-seconds: ${AI_SECRETARY_DISPATCH_RUNNING_TIMEOUT_SECONDS:300}
     dispatch-recovery-batch-size: ${AI_SECRETARY_DISPATCH_RECOVERY_BATCH_SIZE:50}
+    dispatch-max-retry-count: ${AI_SECRETARY_DISPATCH_MAX_RETRY_COUNT:3}
+    dispatch-retry-backoff-seconds: ${AI_SECRETARY_DISPATCH_RETRY_BACKOFF_SECONDS:60}
 
 feishu:
   enabled: ${FEISHU_ENABLED:false}

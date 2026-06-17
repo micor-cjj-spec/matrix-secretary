@@ -22,6 +22,8 @@ public class TaskDispatchRecordRepository {
 
     private static final long DEFAULT_RECOVERY_BATCH_SIZE = 50;
     private static final long MAX_RECOVERY_BATCH_SIZE = 500;
+    private static final int DEFAULT_MAX_RETRY_COUNT = 3;
+    private static final long DEFAULT_RETRY_BACKOFF_SECONDS = 60;
 
     private final TaskDispatchRecordMapper mapper;
 
@@ -50,7 +52,15 @@ public class TaskDispatchRecordRepository {
                             String actionId,
                             OffsetDateTime triggerAt,
                             String dispatchOwner) {
-        TaskDispatchRecordEntity entity = newRunningRecord(planId, actionId, triggerAt, dispatchOwner);
+        return tryStart(planId, actionId, triggerAt, dispatchOwner, DEFAULT_MAX_RETRY_COUNT);
+    }
+
+    public boolean tryStart(String planId,
+                            String actionId,
+                            OffsetDateTime triggerAt,
+                            String dispatchOwner,
+                            Integer maxRetryCount) {
+        TaskDispatchRecordEntity entity = newRunningRecord(planId, actionId, triggerAt, dispatchOwner, normalizeMaxRetryCount(maxRetryCount));
         try {
             return mapper.insert(entity) == 1;
         } catch (DuplicateKeyException ex) {
@@ -58,10 +68,49 @@ public class TaskDispatchRecordRepository {
         }
     }
 
+    public boolean tryStartOrRetry(String planId,
+                                   String actionId,
+                                   OffsetDateTime triggerAt,
+                                   String dispatchOwner,
+                                   Integer maxRetryCount) {
+        if (tryStart(planId, actionId, triggerAt, dispatchOwner, maxRetryCount)) {
+            return true;
+        }
+        return tryRestartFailedForRetry(
+                buildIdempotencyKey(planId, actionId, triggerAt),
+                dispatchOwner,
+                maxRetryCount
+        );
+    }
+
+    public boolean tryRestartFailedForRetry(String idempotencyKey,
+                                            String dispatchOwner,
+                                            Integer maxRetryCount) {
+        int normalizedMaxRetryCount = normalizeMaxRetryCount(maxRetryCount);
+        OffsetDateTime now = OffsetDateTime.now();
+        return mapper.update(null, new LambdaUpdateWrapper<TaskDispatchRecordEntity>()
+                .eq(TaskDispatchRecordEntity::getIdempotencyKey, idempotencyKey)
+                .eq(TaskDispatchRecordEntity::getStatus, STATUS_FAILED)
+                .apply("COALESCE(retry_count, 0) < {0}", normalizedMaxRetryCount)
+                .and(retry -> retry.isNull(TaskDispatchRecordEntity::getNextRetryAt)
+                        .or()
+                        .le(TaskDispatchRecordEntity::getNextRetryAt, now))
+                .set(TaskDispatchRecordEntity::getStatus, STATUS_RUNNING)
+                .set(TaskDispatchRecordEntity::getDispatchOwner, dispatchOwner)
+                .set(TaskDispatchRecordEntity::getStartedAt, now)
+                .set(TaskDispatchRecordEntity::getFinishedAt, null)
+                .set(TaskDispatchRecordEntity::getUpdatedAt, now)
+                .set(TaskDispatchRecordEntity::getErrorMessage, null)
+                .set(TaskDispatchRecordEntity::getMaxRetryCount, normalizedMaxRetryCount)
+                .set(TaskDispatchRecordEntity::getNextRetryAt, null)
+                .setSql("retry_count = COALESCE(retry_count, 0) + 1")) == 1;
+    }
+
     private TaskDispatchRecordEntity newRunningRecord(String planId,
                                                       String actionId,
                                                       OffsetDateTime triggerAt,
-                                                      String dispatchOwner) {
+                                                      String dispatchOwner,
+                                                      int maxRetryCount) {
         TaskDispatchRecordEntity entity = new TaskDispatchRecordEntity();
         OffsetDateTime now = OffsetDateTime.now();
         entity.setId("drec-" + UUID.randomUUID().toString().substring(0, 12));
@@ -72,6 +121,9 @@ public class TaskDispatchRecordRepository {
         entity.setStatus(STATUS_RUNNING);
         entity.setDispatchOwner(dispatchOwner);
         entity.setStartedAt(now);
+        entity.setRetryCount(0);
+        entity.setMaxRetryCount(maxRetryCount);
+        entity.setNextRetryAt(null);
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
         return entity;
@@ -88,6 +140,10 @@ public class TaskDispatchRecordRepository {
     }
 
     public boolean markTimedOutAsFailed(String id, String errorMessage) {
+        return markTimedOutAsFailed(id, errorMessage, DEFAULT_RETRY_BACKOFF_SECONDS);
+    }
+
+    public boolean markTimedOutAsFailed(String id, String errorMessage, Long retryBackoffSeconds) {
         OffsetDateTime now = OffsetDateTime.now();
         return mapper.update(null, new LambdaUpdateWrapper<TaskDispatchRecordEntity>()
                 .eq(TaskDispatchRecordEntity::getId, id)
@@ -95,14 +151,22 @@ public class TaskDispatchRecordRepository {
                 .set(TaskDispatchRecordEntity::getStatus, STATUS_FAILED)
                 .set(TaskDispatchRecordEntity::getFinishedAt, now)
                 .set(TaskDispatchRecordEntity::getUpdatedAt, now)
+                .set(TaskDispatchRecordEntity::getNextRetryAt, now.plusSeconds(normalizeRetryBackoffSeconds(retryBackoffSeconds)))
                 .set(TaskDispatchRecordEntity::getErrorMessage, limit(errorMessage, 1024))) == 1;
     }
 
     public int markTimedOutRunningRecordsAsFailed(OffsetDateTime timeoutBefore, Long batchSize, String errorMessage) {
+        return markTimedOutRunningRecordsAsFailed(timeoutBefore, batchSize, errorMessage, DEFAULT_RETRY_BACKOFF_SECONDS);
+    }
+
+    public int markTimedOutRunningRecordsAsFailed(OffsetDateTime timeoutBefore,
+                                                  Long batchSize,
+                                                  String errorMessage,
+                                                  Long retryBackoffSeconds) {
         List<TaskDispatchRecordEntity> timedOutRecords = findTimedOutRunningRecords(timeoutBefore, batchSize);
         int recovered = 0;
         for (TaskDispatchRecordEntity record : timedOutRecords) {
-            if (markTimedOutAsFailed(record.getId(), errorMessage)) {
+            if (markTimedOutAsFailed(record.getId(), errorMessage, retryBackoffSeconds)) {
                 recovered++;
             }
         }
@@ -116,16 +180,22 @@ public class TaskDispatchRecordRepository {
                 .set(TaskDispatchRecordEntity::getStatus, STATUS_SUCCEEDED)
                 .set(TaskDispatchRecordEntity::getFinishedAt, now)
                 .set(TaskDispatchRecordEntity::getUpdatedAt, now)
+                .set(TaskDispatchRecordEntity::getNextRetryAt, null)
                 .set(TaskDispatchRecordEntity::getErrorMessage, null)) == 1;
     }
 
     public boolean markFailed(String idempotencyKey, String errorMessage) {
+        return markFailed(idempotencyKey, errorMessage, DEFAULT_RETRY_BACKOFF_SECONDS);
+    }
+
+    public boolean markFailed(String idempotencyKey, String errorMessage, Long retryBackoffSeconds) {
         OffsetDateTime now = OffsetDateTime.now();
         return mapper.update(null, new LambdaUpdateWrapper<TaskDispatchRecordEntity>()
                 .eq(TaskDispatchRecordEntity::getIdempotencyKey, idempotencyKey)
                 .set(TaskDispatchRecordEntity::getStatus, STATUS_FAILED)
                 .set(TaskDispatchRecordEntity::getFinishedAt, now)
                 .set(TaskDispatchRecordEntity::getUpdatedAt, now)
+                .set(TaskDispatchRecordEntity::getNextRetryAt, now.plusSeconds(normalizeRetryBackoffSeconds(retryBackoffSeconds)))
                 .set(TaskDispatchRecordEntity::getErrorMessage, limit(errorMessage, 1024))) == 1;
     }
 
@@ -134,6 +204,20 @@ public class TaskDispatchRecordRepository {
             return DEFAULT_RECOVERY_BATCH_SIZE;
         }
         return Math.min(batchSize, MAX_RECOVERY_BATCH_SIZE);
+    }
+
+    private int normalizeMaxRetryCount(Integer maxRetryCount) {
+        if (maxRetryCount == null || maxRetryCount < 0) {
+            return DEFAULT_MAX_RETRY_COUNT;
+        }
+        return maxRetryCount;
+    }
+
+    private long normalizeRetryBackoffSeconds(Long retryBackoffSeconds) {
+        if (retryBackoffSeconds == null || retryBackoffSeconds < 1) {
+            return DEFAULT_RETRY_BACKOFF_SECONDS;
+        }
+        return retryBackoffSeconds;
     }
 
     private String limit(String value, int maxLength) {
