@@ -2,12 +2,14 @@ package com.kailei.demo.repository;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kailei.demo.entity.TaskDispatchRecordEntity;
 import com.kailei.demo.mapper.TaskDispatchRecordMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -17,6 +19,9 @@ public class TaskDispatchRecordRepository {
     public static final String STATUS_RUNNING = "RUNNING";
     public static final String STATUS_SUCCEEDED = "SUCCEEDED";
     public static final String STATUS_FAILED = "FAILED";
+
+    private static final long DEFAULT_RECOVERY_BATCH_SIZE = 50;
+    private static final long MAX_RECOVERY_BATCH_SIZE = 500;
 
     private final TaskDispatchRecordMapper mapper;
 
@@ -72,6 +77,38 @@ public class TaskDispatchRecordRepository {
         return entity;
     }
 
+    public List<TaskDispatchRecordEntity> findTimedOutRunningRecords(OffsetDateTime timeoutBefore, Long batchSize) {
+        long normalizedBatchSize = normalizeBatchSize(batchSize);
+        return mapper.selectPage(new Page<>(1, normalizedBatchSize), new LambdaQueryWrapper<TaskDispatchRecordEntity>()
+                        .eq(TaskDispatchRecordEntity::getStatus, STATUS_RUNNING)
+                        .isNotNull(TaskDispatchRecordEntity::getStartedAt)
+                        .le(TaskDispatchRecordEntity::getStartedAt, timeoutBefore)
+                        .orderByAsc(TaskDispatchRecordEntity::getStartedAt))
+                .getRecords();
+    }
+
+    public boolean markTimedOutAsFailed(String id, String errorMessage) {
+        OffsetDateTime now = OffsetDateTime.now();
+        return mapper.update(null, new LambdaUpdateWrapper<TaskDispatchRecordEntity>()
+                .eq(TaskDispatchRecordEntity::getId, id)
+                .eq(TaskDispatchRecordEntity::getStatus, STATUS_RUNNING)
+                .set(TaskDispatchRecordEntity::getStatus, STATUS_FAILED)
+                .set(TaskDispatchRecordEntity::getFinishedAt, now)
+                .set(TaskDispatchRecordEntity::getUpdatedAt, now)
+                .set(TaskDispatchRecordEntity::getErrorMessage, limit(errorMessage, 1024))) == 1;
+    }
+
+    public int markTimedOutRunningRecordsAsFailed(OffsetDateTime timeoutBefore, Long batchSize, String errorMessage) {
+        List<TaskDispatchRecordEntity> timedOutRecords = findTimedOutRunningRecords(timeoutBefore, batchSize);
+        int recovered = 0;
+        for (TaskDispatchRecordEntity record : timedOutRecords) {
+            if (markTimedOutAsFailed(record.getId(), errorMessage)) {
+                recovered++;
+            }
+        }
+        return recovered;
+    }
+
     public boolean markSucceeded(String idempotencyKey) {
         OffsetDateTime now = OffsetDateTime.now();
         return mapper.update(null, new LambdaUpdateWrapper<TaskDispatchRecordEntity>()
@@ -90,6 +127,13 @@ public class TaskDispatchRecordRepository {
                 .set(TaskDispatchRecordEntity::getFinishedAt, now)
                 .set(TaskDispatchRecordEntity::getUpdatedAt, now)
                 .set(TaskDispatchRecordEntity::getErrorMessage, limit(errorMessage, 1024))) == 1;
+    }
+
+    private long normalizeBatchSize(Long batchSize) {
+        if (batchSize == null || batchSize < 1) {
+            return DEFAULT_RECOVERY_BATCH_SIZE;
+        }
+        return Math.min(batchSize, MAX_RECOVERY_BATCH_SIZE);
     }
 
     private String limit(String value, int maxLength) {
