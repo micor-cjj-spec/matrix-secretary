@@ -401,6 +401,7 @@ public class AiTaskService {
             dispatchMetrics.incrementRetryStarted();
         }
 
+        long executionStartNanos = System.nanoTime();
         try {
             DispatchResult result = repository.findById(dueAction.getPlanId())
                     .map(plan -> dispatchDueAction(plan, dueAction.getActionId(), now))
@@ -419,6 +420,8 @@ public class AiTaskService {
                 dispatchMetrics.incrementFailed();
             }
             throw ex;
+        } finally {
+            dispatchMetrics.recordExecutionDurationNanos(System.nanoTime() - executionStartNanos);
         }
     }
 
