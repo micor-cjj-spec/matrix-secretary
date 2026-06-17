@@ -92,12 +92,33 @@ public class TaskDispatchRecordRepository {
     }
 
     public TaskDispatchSummaryResponse summarizeByPlanId(String planId) {
+        long total = countByPlanId(planId);
+        long running = countByPlanIdAndStatus(planId, STATUS_RUNNING);
+        long succeeded = countByPlanIdAndStatus(planId, STATUS_SUCCEEDED);
+        long failed = countByPlanIdAndStatus(planId, STATUS_FAILED);
+        long retryScheduled = countRetryScheduledByPlanId(planId);
+        long retryExhausted = countRetryExhaustedByPlanId(planId);
+        Optional<TaskDispatchRecordEntity> latest = findLatestByPlanId(planId);
         return new TaskDispatchSummaryResponse(
-                countByPlanId(planId),
-                countByPlanIdAndStatus(planId, STATUS_RUNNING),
-                countByPlanIdAndStatus(planId, STATUS_SUCCEEDED),
-                countByPlanIdAndStatus(planId, STATUS_FAILED)
+                total,
+                running,
+                succeeded,
+                failed,
+                retryScheduled,
+                retryExhausted,
+                TaskDispatchSummaryResponse.successRate(total, succeeded),
+                latest.map(TaskDispatchRecordEntity::getStatus).orElse(null),
+                latest.map(TaskDispatchRecordEntity::getTriggerAt).orElse(null),
+                latest.map(TaskDispatchRecordEntity::getFinishedAt).orElse(null)
         );
+    }
+
+    public Optional<TaskDispatchRecordEntity> findLatestByPlanId(String planId) {
+        return Optional.ofNullable(mapper.selectOne(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
+                .eq(TaskDispatchRecordEntity::getPlanId, planId)
+                .orderByDesc(TaskDispatchRecordEntity::getTriggerAt)
+                .orderByDesc(TaskDispatchRecordEntity::getCreatedAt)
+                .last("LIMIT 1")));
     }
 
     private long countByPlanId(String planId) {
@@ -109,6 +130,21 @@ public class TaskDispatchRecordRepository {
         return mapper.selectCount(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
                 .eq(TaskDispatchRecordEntity::getPlanId, planId)
                 .eq(TaskDispatchRecordEntity::getStatus, status));
+    }
+
+    private long countRetryScheduledByPlanId(String planId) {
+        return mapper.selectCount(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
+                .eq(TaskDispatchRecordEntity::getPlanId, planId)
+                .eq(TaskDispatchRecordEntity::getStatus, STATUS_FAILED)
+                .isNotNull(TaskDispatchRecordEntity::getNextRetryAt)
+                .apply("COALESCE(retry_count, 0) < COALESCE(max_retry_count, 0)"));
+    }
+
+    private long countRetryExhaustedByPlanId(String planId) {
+        return mapper.selectCount(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
+                .eq(TaskDispatchRecordEntity::getPlanId, planId)
+                .eq(TaskDispatchRecordEntity::getStatus, STATUS_FAILED)
+                .apply("COALESCE(retry_count, 0) >= COALESCE(max_retry_count, 0)"));
     }
 
     private void applyQueryFilters(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
