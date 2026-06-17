@@ -29,6 +29,7 @@ import java.util.stream.IntStream;
 public class AiTaskService {
 
     private static final String SYSTEM_OPERATOR = "system-scheduler";
+    private static final long DEFAULT_DISPATCH_PAGE_SIZE = 50;
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
@@ -285,16 +286,34 @@ public class AiTaskService {
     }
 
     public void dispatchDueOnceTasks() {
+        dispatchDueOnceTasks(DEFAULT_DISPATCH_PAGE_SIZE);
+    }
+
+    public void dispatchDueOnceTasks(Long pageSize) {
         OffsetDateTime now = OffsetDateTime.now();
-        repository.findAll().forEach(plan -> {
-            List<TaskAction> nextActions = plan.tasks().stream()
-                    .map(action -> dispatchIfDue(plan, action, now))
-                    .toList();
-            if (!nextActions.equals(plan.tasks())) {
-                TaskPlan saved = repository.save(plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions));
-                sessionRepository.updateAfterPlanChange(saved);
+        long normalizedSize = PageResult.normalizeSize(pageSize);
+        long page = 1;
+        while (true) {
+            PageResult<TaskPlan> planPage = repository.findPage(null, page, normalizedSize);
+            if (planPage.records().isEmpty()) {
+                break;
             }
-        });
+            planPage.records().forEach(plan -> dispatchDueActions(plan, now));
+            if (page >= planPage.pages()) {
+                break;
+            }
+            page++;
+        }
+    }
+
+    private void dispatchDueActions(TaskPlan plan, OffsetDateTime now) {
+        List<TaskAction> nextActions = plan.tasks().stream()
+                .map(action -> dispatchIfDue(plan, action, now))
+                .toList();
+        if (!nextActions.equals(plan.tasks())) {
+            TaskPlan saved = repository.save(plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions));
+            sessionRepository.updateAfterPlanChange(saved);
+        }
     }
 
     private void ensureSameUser(TaskPlan plan, String userId) {
