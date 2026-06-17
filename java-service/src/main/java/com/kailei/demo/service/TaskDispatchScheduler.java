@@ -20,29 +20,45 @@ public class TaskDispatchScheduler {
     private final String dispatchOwner;
     private final Long dispatchRunningTimeoutSeconds;
     private final Long dispatchRecoveryBatchSize;
+    private final Integer dispatchMaxRetryCount;
+    private final Long dispatchRetryBackoffSeconds;
 
     public TaskDispatchScheduler(AiTaskService aiTaskService,
                                  @Value("${ai-secretary.local-scheduler.dispatch-page-size:50}") Long dispatchPageSize,
                                  @Value("${ai-secretary.local-scheduler.dispatch-lease-seconds:60}") Long dispatchLeaseSeconds,
                                  @Value("${ai-secretary.local-scheduler.dispatch-owner:local-scheduler}") String dispatchOwner,
                                  @Value("${ai-secretary.local-scheduler.dispatch-running-timeout-seconds:300}") Long dispatchRunningTimeoutSeconds,
-                                 @Value("${ai-secretary.local-scheduler.dispatch-recovery-batch-size:50}") Long dispatchRecoveryBatchSize) {
+                                 @Value("${ai-secretary.local-scheduler.dispatch-recovery-batch-size:50}") Long dispatchRecoveryBatchSize,
+                                 @Value("${ai-secretary.local-scheduler.dispatch-max-retry-count:3}") Integer dispatchMaxRetryCount,
+                                 @Value("${ai-secretary.local-scheduler.dispatch-retry-backoff-seconds:60}") Long dispatchRetryBackoffSeconds) {
         this.aiTaskService = aiTaskService;
         this.dispatchPageSize = dispatchPageSize;
         this.dispatchLeaseSeconds = dispatchLeaseSeconds;
         this.dispatchOwner = dispatchOwner;
         this.dispatchRunningTimeoutSeconds = dispatchRunningTimeoutSeconds;
         this.dispatchRecoveryBatchSize = dispatchRecoveryBatchSize;
+        this.dispatchMaxRetryCount = dispatchMaxRetryCount;
+        this.dispatchRetryBackoffSeconds = dispatchRetryBackoffSeconds;
     }
 
     @Scheduled(fixedDelay = 10_000)
     public void dispatchDueTasks() {
         try {
-            int recovered = aiTaskService.recoverTimedOutDispatchRecords(dispatchRunningTimeoutSeconds, dispatchRecoveryBatchSize);
+            int recovered = aiTaskService.recoverTimedOutDispatchRecords(
+                    dispatchRunningTimeoutSeconds,
+                    dispatchRecoveryBatchSize,
+                    dispatchRetryBackoffSeconds
+            );
             if (recovered > 0) {
                 log.warn("Recovered {} timed out dispatch records", recovered);
             }
-            aiTaskService.dispatchDueOnceTasks(dispatchPageSize, dispatchLeaseSeconds, dispatchOwner);
+            aiTaskService.dispatchDueOnceTasks(
+                    dispatchPageSize,
+                    dispatchLeaseSeconds,
+                    dispatchOwner,
+                    dispatchMaxRetryCount,
+                    dispatchRetryBackoffSeconds
+            );
         } catch (DataAccessException ex) {
             log.warn("Skip task dispatch because database is unavailable: {}", ex.getMostSpecificCause().getMessage());
         }
