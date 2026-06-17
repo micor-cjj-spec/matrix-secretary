@@ -22,9 +22,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Repository
 public class TaskPlanRepository {
@@ -47,12 +51,46 @@ public class TaskPlanRepository {
         if (taskPlanMapper.updateById(planEntity) == 0) {
             taskPlanMapper.insert(planEntity);
         }
-        taskActionMapper.delete(new LambdaQueryWrapper<TaskActionEntity>()
-                .eq(TaskActionEntity::getPlanId, plan.planId()));
-        for (int i = 0; i < plan.tasks().size(); i++) {
-            taskActionMapper.insert(toActionEntity(plan.planId(), plan.tasks().get(i), i));
-        }
+        saveActions(plan);
         return plan;
+    }
+
+    private void saveActions(TaskPlan plan) {
+        List<TaskActionEntity> existingActions = findActions(plan.planId());
+        Map<String, TaskActionEntity> existingByActionId = existingActions.stream()
+                .collect(Collectors.toMap(TaskActionEntity::getActionId, Function.identity()));
+        Set<String> nextActionIds = new HashSet<>();
+
+        for (int i = 0; i < plan.tasks().size(); i++) {
+            TaskAction action = plan.tasks().get(i);
+            TaskActionEntity nextEntity = toActionEntity(plan.planId(), action, i);
+            nextActionIds.add(nextEntity.getActionId());
+
+            TaskActionEntity existing = existingByActionId.get(nextEntity.getActionId());
+            if (existing == null) {
+                taskActionMapper.insert(nextEntity);
+                continue;
+            }
+            preserveDispatchLease(nextEntity, existing);
+            taskActionMapper.updateById(nextEntity);
+        }
+
+        deleteStaleActions(plan.planId(), nextActionIds);
+    }
+
+    private void preserveDispatchLease(TaskActionEntity nextEntity, TaskActionEntity existing) {
+        nextEntity.setDispatchLockedUntil(existing.getDispatchLockedUntil());
+        nextEntity.setDispatchOwner(existing.getDispatchOwner());
+        nextEntity.setDispatchAttempt(existing.getDispatchAttempt());
+    }
+
+    private void deleteStaleActions(String planId, Set<String> nextActionIds) {
+        LambdaQueryWrapper<TaskActionEntity> wrapper = new LambdaQueryWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getPlanId, planId);
+        if (!nextActionIds.isEmpty()) {
+            wrapper.notIn(TaskActionEntity::getActionId, nextActionIds);
+        }
+        taskActionMapper.delete(wrapper);
     }
 
     public Optional<TaskPlan> findById(String planId) {
