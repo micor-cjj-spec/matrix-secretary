@@ -1,6 +1,7 @@
 package com.kailei.demo.repository;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -95,6 +96,24 @@ public class TaskPlanRepository {
                 .orderByAsc(TaskActionEntity::getSortOrder);
         Page<TaskActionEntity> actionPage = taskActionMapper.selectPage(new Page<>(page, size), wrapper);
         return new PageResult<>(actionPage.getRecords(), actionPage.getTotal(), actionPage.getCurrent(), actionPage.getSize(), actionPage.getPages());
+    }
+
+    public boolean tryAcquireDispatchLease(String actionId,
+                                           OffsetDateTime now,
+                                           OffsetDateTime leaseUntil,
+                                           String owner) {
+        LambdaUpdateWrapper<TaskActionEntity> wrapper = new LambdaUpdateWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getActionId, actionId)
+                .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                .isNotNull(TaskActionEntity::getNextRunAt)
+                .le(TaskActionEntity::getNextRunAt, now)
+                .and(lock -> lock.isNull(TaskActionEntity::getDispatchLockedUntil)
+                        .or()
+                        .le(TaskActionEntity::getDispatchLockedUntil, now))
+                .set(TaskActionEntity::getDispatchLockedUntil, leaseUntil)
+                .set(TaskActionEntity::getDispatchOwner, owner)
+                .setSql("dispatch_attempt = COALESCE(dispatch_attempt, 0) + 1");
+        return taskActionMapper.update(null, wrapper) == 1;
     }
 
     public List<TaskPlan> findByUserId(String userId) {

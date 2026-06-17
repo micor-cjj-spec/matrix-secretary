@@ -31,6 +31,7 @@ public class AiTaskService {
 
     private static final String SYSTEM_OPERATOR = "system-scheduler";
     private static final long DEFAULT_DISPATCH_PAGE_SIZE = 50;
+    private static final long DEFAULT_DISPATCH_LEASE_SECONDS = 60;
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
@@ -287,17 +288,31 @@ public class AiTaskService {
     }
 
     public void dispatchDueOnceTasks() {
-        dispatchDueOnceTasks(DEFAULT_DISPATCH_PAGE_SIZE);
+        dispatchDueOnceTasks(DEFAULT_DISPATCH_PAGE_SIZE, DEFAULT_DISPATCH_LEASE_SECONDS, SYSTEM_OPERATOR);
     }
 
     public void dispatchDueOnceTasks(Long pageSize) {
-        OffsetDateTime now = OffsetDateTime.now();
-        long normalizedSize = PageResult.normalizeSize(pageSize);
-        PageResult<TaskActionEntity> dueActions = repository.findDueScheduledActions(now, 1, normalizedSize);
-        dueActions.records().forEach(action -> dispatchDueAction(action, now));
+        dispatchDueOnceTasks(pageSize, DEFAULT_DISPATCH_LEASE_SECONDS, SYSTEM_OPERATOR);
     }
 
-    private void dispatchDueAction(TaskActionEntity dueAction, OffsetDateTime now) {
+    public void dispatchDueOnceTasks(Long pageSize, Long leaseSeconds, String owner) {
+        OffsetDateTime now = OffsetDateTime.now();
+        long normalizedSize = PageResult.normalizeSize(pageSize);
+        long normalizedLeaseSeconds = leaseSeconds == null || leaseSeconds < 1 ? DEFAULT_DISPATCH_LEASE_SECONDS : leaseSeconds;
+        String normalizedOwner = owner == null || owner.isBlank() ? SYSTEM_OPERATOR : owner;
+        PageResult<TaskActionEntity> dueActions = repository.findDueScheduledActions(now, 1, normalizedSize);
+        dueActions.records().forEach(action -> dispatchDueAction(action, now, normalizedLeaseSeconds, normalizedOwner));
+    }
+
+    private void dispatchDueAction(TaskActionEntity dueAction,
+                                   OffsetDateTime now,
+                                   long leaseSeconds,
+                                   String owner) {
+        OffsetDateTime leaseUntil = now.plusSeconds(leaseSeconds);
+        boolean acquired = repository.tryAcquireDispatchLease(dueAction.getActionId(), now, leaseUntil, owner);
+        if (!acquired) {
+            return;
+        }
         repository.findById(dueAction.getPlanId())
                 .ifPresent(plan -> dispatchDueAction(plan, dueAction.getActionId(), now));
     }

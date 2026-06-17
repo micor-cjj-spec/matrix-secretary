@@ -16,17 +16,23 @@ public class TaskDispatchScheduler {
 
     private final AiTaskService aiTaskService;
     private final Long dispatchPageSize;
+    private final Long dispatchLeaseSeconds;
+    private final String dispatchOwner;
 
     public TaskDispatchScheduler(AiTaskService aiTaskService,
-                                 @Value("${ai-secretary.local-scheduler.dispatch-page-size:50}") Long dispatchPageSize) {
+                                 @Value("${ai-secretary.local-scheduler.dispatch-page-size:50}") Long dispatchPageSize,
+                                 @Value("${ai-secretary.local-scheduler.dispatch-lease-seconds:60}") Long dispatchLeaseSeconds,
+                                 @Value("${ai-secretary.local-scheduler.dispatch-owner:local-scheduler}") String dispatchOwner) {
         this.aiTaskService = aiTaskService;
         this.dispatchPageSize = dispatchPageSize;
+        this.dispatchLeaseSeconds = dispatchLeaseSeconds;
+        this.dispatchOwner = dispatchOwner;
     }
 
     @Scheduled(fixedDelay = 10_000)
     public void dispatchDueTasks() {
         try {
-            aiTaskService.dispatchDueOnceTasks(dispatchPageSize);
+            aiTaskService.dispatchDueOnceTasks(dispatchPageSize, dispatchLeaseSeconds, dispatchOwner);
         } catch (DataAccessException ex) {
             log.warn("Skip task dispatch because database is unavailable: {}", ex.getMostSpecificCause().getMessage());
         }

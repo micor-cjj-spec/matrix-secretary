@@ -47,6 +47,8 @@ ai-secretary:
   local-scheduler:
     enabled: ${AI_SECRETARY_LOCAL_SCHEDULER_ENABLED:true}
     dispatch-page-size: ${AI_SECRETARY_DISPATCH_PAGE_SIZE:50}
+    dispatch-lease-seconds: ${AI_SECRETARY_DISPATCH_LEASE_SECONDS:60}
+    dispatch-owner: ${AI_SECRETARY_DISPATCH_OWNER:local-scheduler}
 
 feishu:
   enabled: ${FEISHU_ENABLED:false}
