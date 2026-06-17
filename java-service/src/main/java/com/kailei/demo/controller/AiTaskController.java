@@ -1,5 +1,6 @@
 package com.kailei.demo.controller;
 
+import com.kailei.demo.entity.TaskDispatchRecordEntity;
 import com.kailei.demo.entity.TaskExecutionLogEntity;
 import com.kailei.demo.model.CancelTaskRequest;
 import com.kailei.demo.model.ConfirmTaskRequest;
@@ -10,6 +11,7 @@ import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.RetryTaskRequest;
 import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskPlan;
+import com.kailei.demo.repository.TaskDispatchRecordRepository;
 import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.service.AiTaskService;
 import jakarta.validation.Valid;
@@ -30,11 +32,14 @@ public class AiTaskController {
 
     private final AiTaskService aiTaskService;
     private final TaskExecutionLogRepository executionLogRepository;
+    private final TaskDispatchRecordRepository dispatchRecordRepository;
 
     public AiTaskController(AiTaskService aiTaskService,
-                            TaskExecutionLogRepository executionLogRepository) {
+                            TaskExecutionLogRepository executionLogRepository,
+                            TaskDispatchRecordRepository dispatchRecordRepository) {
         this.aiTaskService = aiTaskService;
         this.executionLogRepository = executionLogRepository;
+        this.dispatchRecordRepository = dispatchRecordRepository;
     }
 
     @PostMapping("/preview")
@@ -91,6 +96,25 @@ public class AiTaskController {
                                                    @RequestParam(required = false) String userId) {
         aiTaskService.get(planId, userId);
         return executionLogRepository.findByPlanIdAndActionId(planId, actionId);
+    }
+
+    @GetMapping("/{planId}/dispatch-records")
+    public PageResult<TaskDispatchRecordEntity> dispatchRecords(@PathVariable String planId,
+                                                                @RequestParam(required = false) String userId,
+                                                                @RequestParam(required = false) Long page,
+                                                                @RequestParam(required = false) Long size) {
+        aiTaskService.get(planId, userId);
+        return dispatchRecordRepository.findByPlanId(planId, page, size);
+    }
+
+    @GetMapping("/{planId}/actions/{actionId}/dispatch-records")
+    public PageResult<TaskDispatchRecordEntity> actionDispatchRecords(@PathVariable String planId,
+                                                                      @PathVariable String actionId,
+                                                                      @RequestParam(required = false) String userId,
+                                                                      @RequestParam(required = false) Long page,
+                                                                      @RequestParam(required = false) Long size) {
+        aiTaskService.get(planId, userId);
+        return dispatchRecordRepository.findByPlanIdAndActionId(planId, actionId, page, size);
     }
 
     @GetMapping("/sessions/{sessionId}")
