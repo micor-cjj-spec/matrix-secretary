@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kailei.demo.entity.TaskDispatchRecordEntity;
 import com.kailei.demo.mapper.TaskDispatchRecordMapper;
+import com.kailei.demo.model.PageResult;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
@@ -40,6 +41,32 @@ public class TaskDispatchRecordRepository {
         return Optional.ofNullable(mapper.selectOne(new LambdaQueryWrapper<TaskDispatchRecordEntity>()
                 .eq(TaskDispatchRecordEntity::getIdempotencyKey, idempotencyKey)
                 .last("LIMIT 1")));
+    }
+
+    public PageResult<TaskDispatchRecordEntity> findByPlanId(String planId, Long page, Long size) {
+        LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper = new LambdaQueryWrapper<TaskDispatchRecordEntity>()
+                .eq(TaskDispatchRecordEntity::getPlanId, planId)
+                .orderByDesc(TaskDispatchRecordEntity::getTriggerAt)
+                .orderByDesc(TaskDispatchRecordEntity::getCreatedAt);
+        return toPageResult(mapper.selectPage(
+                new Page<>(PageResult.normalizePage(page), PageResult.normalizeSize(size)),
+                wrapper
+        ));
+    }
+
+    public PageResult<TaskDispatchRecordEntity> findByPlanIdAndActionId(String planId,
+                                                                        String actionId,
+                                                                        Long page,
+                                                                        Long size) {
+        LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper = new LambdaQueryWrapper<TaskDispatchRecordEntity>()
+                .eq(TaskDispatchRecordEntity::getPlanId, planId)
+                .eq(TaskDispatchRecordEntity::getActionId, actionId)
+                .orderByDesc(TaskDispatchRecordEntity::getTriggerAt)
+                .orderByDesc(TaskDispatchRecordEntity::getCreatedAt);
+        return toPageResult(mapper.selectPage(
+                new Page<>(PageResult.normalizePage(page), PageResult.normalizeSize(size)),
+                wrapper
+        ));
     }
 
     public boolean hasSucceeded(String idempotencyKey) {
@@ -197,6 +224,10 @@ public class TaskDispatchRecordRepository {
                 .set(TaskDispatchRecordEntity::getUpdatedAt, now)
                 .set(TaskDispatchRecordEntity::getNextRetryAt, now.plusSeconds(normalizeRetryBackoffSeconds(retryBackoffSeconds)))
                 .set(TaskDispatchRecordEntity::getErrorMessage, limit(errorMessage, 1024))) == 1;
+    }
+
+    private PageResult<TaskDispatchRecordEntity> toPageResult(Page<TaskDispatchRecordEntity> page) {
+        return new PageResult<>(page.getRecords(), page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
     private long normalizeBatchSize(Long batchSize) {
