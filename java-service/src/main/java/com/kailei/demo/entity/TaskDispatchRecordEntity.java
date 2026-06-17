@@ -8,6 +8,7 @@ import org.dromara.autotable.annotation.ColumnComment;
 import org.dromara.autotable.annotation.ColumnType;
 import org.dromara.autotable.annotation.Index;
 import org.dromara.autotable.annotation.PrimaryKey;
+import org.dromara.autotable.annotation.enums.IndexTypeEnum;
 import org.dromara.autotable.annotation.mysql.MysqlTypeConstant;
 
 import java.time.OffsetDateTime;
@@ -36,7 +37,7 @@ public class TaskDispatchRecordEntity {
     @ColumnComment("触发时间")
     private OffsetDateTime triggerAt;
 
-    @Index
+    @Index(name = "uk_task_dispatch_idempotency_key", type = IndexTypeEnum.UNIQUE)
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 192)
     @ColumnComment("幂等键")
     private String idempotencyKey;

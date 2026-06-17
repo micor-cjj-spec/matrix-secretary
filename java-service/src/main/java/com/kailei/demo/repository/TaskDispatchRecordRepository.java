@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.kailei.demo.entity.TaskDispatchRecordEntity;
 import com.kailei.demo.mapper.TaskDispatchRecordMapper;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
 import java.time.OffsetDateTime;
@@ -44,23 +45,31 @@ public class TaskDispatchRecordRepository {
                             String actionId,
                             OffsetDateTime triggerAt,
                             String dispatchOwner) {
-        String idempotencyKey = buildIdempotencyKey(planId, actionId, triggerAt);
-        if (findByIdempotencyKey(idempotencyKey).isPresent()) {
+        TaskDispatchRecordEntity entity = newRunningRecord(planId, actionId, triggerAt, dispatchOwner);
+        try {
+            return mapper.insert(entity) == 1;
+        } catch (DuplicateKeyException ex) {
             return false;
         }
+    }
+
+    private TaskDispatchRecordEntity newRunningRecord(String planId,
+                                                      String actionId,
+                                                      OffsetDateTime triggerAt,
+                                                      String dispatchOwner) {
         TaskDispatchRecordEntity entity = new TaskDispatchRecordEntity();
         OffsetDateTime now = OffsetDateTime.now();
         entity.setId("drec-" + UUID.randomUUID().toString().substring(0, 12));
         entity.setPlanId(planId);
         entity.setActionId(actionId);
         entity.setTriggerAt(triggerAt);
-        entity.setIdempotencyKey(idempotencyKey);
+        entity.setIdempotencyKey(buildIdempotencyKey(planId, actionId, triggerAt));
         entity.setStatus(STATUS_RUNNING);
         entity.setDispatchOwner(dispatchOwner);
         entity.setStartedAt(now);
         entity.setCreatedAt(now);
         entity.setUpdatedAt(now);
-        return mapper.insert(entity) == 1;
+        return entity;
     }
 
     public boolean markSucceeded(String idempotencyKey) {
