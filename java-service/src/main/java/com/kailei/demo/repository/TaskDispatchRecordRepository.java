@@ -44,15 +44,19 @@ public class TaskDispatchRecordRepository {
                 .last("LIMIT 1")));
     }
 
-    public PageResult<TaskDispatchRecordEntity> findAll(String status,
+    public PageResult<TaskDispatchRecordEntity> findAll(String planId,
+                                                        String actionId,
+                                                        String status,
                                                         OffsetDateTime startTime,
                                                         OffsetDateTime endTime,
                                                         String dispatchOwner,
                                                         Boolean retryExhausted,
+                                                        Boolean retryDue,
                                                         Long page,
                                                         Long size) {
         LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper = new LambdaQueryWrapper<>();
-        applyQueryFilters(wrapper, status, startTime, endTime, dispatchOwner, retryExhausted);
+        applyIdentityFilters(wrapper, planId, actionId);
+        applyQueryFilters(wrapper, status, startTime, endTime, dispatchOwner, retryExhausted, retryDue);
         applyDefaultOrder(wrapper);
         return toPageResult(mapper.selectPage(
                 new Page<>(PageResult.normalizePage(page), PageResult.normalizeSize(size)),
@@ -189,12 +193,23 @@ public class TaskDispatchRecordRepository {
                 .apply("COALESCE(retry_count, 0) >= COALESCE(max_retry_count, 0)"));
     }
 
+    private void applyIdentityFilters(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
+                                      String planId,
+                                      String actionId) {
+        if (planId != null && !planId.isBlank()) {
+            wrapper.eq(TaskDispatchRecordEntity::getPlanId, planId.trim());
+        }
+        if (actionId != null && !actionId.isBlank()) {
+            wrapper.eq(TaskDispatchRecordEntity::getActionId, actionId.trim());
+        }
+    }
+
     private void applyQueryFilters(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
                                    String status,
                                    OffsetDateTime startTime,
                                    OffsetDateTime endTime,
                                    String dispatchOwner) {
-        applyQueryFilters(wrapper, status, startTime, endTime, dispatchOwner, null);
+        applyQueryFilters(wrapper, status, startTime, endTime, dispatchOwner, null, null);
     }
 
     private void applyQueryFilters(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
@@ -202,7 +217,8 @@ public class TaskDispatchRecordRepository {
                                    OffsetDateTime startTime,
                                    OffsetDateTime endTime,
                                    String dispatchOwner,
-                                   Boolean retryExhausted) {
+                                   Boolean retryExhausted,
+                                   Boolean retryDue) {
         if (status != null && !status.isBlank()) {
             wrapper.eq(TaskDispatchRecordEntity::getStatus, status.trim().toUpperCase());
         }
@@ -216,6 +232,7 @@ public class TaskDispatchRecordRepository {
             wrapper.eq(TaskDispatchRecordEntity::getDispatchOwner, dispatchOwner.trim());
         }
         applyRetryExhaustedFilter(wrapper, retryExhausted);
+        applyRetryDueFilter(wrapper, retryDue);
     }
 
     private void applyRetryExhaustedFilter(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
@@ -230,6 +247,22 @@ public class TaskDispatchRecordRepository {
         }
         wrapper.isNotNull(TaskDispatchRecordEntity::getNextRetryAt)
                 .apply("COALESCE(retry_count, 0) < COALESCE(max_retry_count, 0)");
+    }
+
+    private void applyRetryDueFilter(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
+                                     Boolean retryDue) {
+        if (retryDue == null) {
+            return;
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        wrapper.eq(TaskDispatchRecordEntity::getStatus, STATUS_FAILED)
+                .isNotNull(TaskDispatchRecordEntity::getNextRetryAt)
+                .apply("COALESCE(retry_count, 0) < COALESCE(max_retry_count, 0)");
+        if (Boolean.TRUE.equals(retryDue)) {
+            wrapper.le(TaskDispatchRecordEntity::getNextRetryAt, now);
+            return;
+        }
+        wrapper.gt(TaskDispatchRecordEntity::getNextRetryAt, now);
     }
 
     private void applyDefaultOrder(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper) {
