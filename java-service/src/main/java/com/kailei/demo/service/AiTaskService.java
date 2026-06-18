@@ -402,6 +402,7 @@ public class AiTaskService {
         }
 
         long executionStartNanos = System.nanoTime();
+        String executionResult = TaskDispatchMetrics.RESULT_UNKNOWN;
         try {
             DispatchResult result = repository.findById(dueAction.getPlanId())
                     .map(plan -> dispatchDueAction(plan, dueAction.getActionId(), now))
@@ -410,18 +411,21 @@ public class AiTaskService {
                 if (dispatchRecordRepository.markFailed(idempotencyKey, result.note(), retryBackoffSeconds)) {
                     dispatchMetrics.incrementFailed();
                 }
+                executionResult = TaskDispatchMetrics.RESULT_FAILED;
                 return;
             }
             if (dispatchRecordRepository.markSucceeded(idempotencyKey)) {
                 dispatchMetrics.incrementSucceeded();
+                executionResult = TaskDispatchMetrics.RESULT_SUCCEEDED;
             }
         } catch (RuntimeException ex) {
             if (dispatchRecordRepository.markFailed(idempotencyKey, ex.getMessage(), retryBackoffSeconds)) {
                 dispatchMetrics.incrementFailed();
             }
+            executionResult = TaskDispatchMetrics.RESULT_FAILED;
             throw ex;
         } finally {
-            dispatchMetrics.recordExecutionDurationNanos(System.nanoTime() - executionStartNanos);
+            dispatchMetrics.recordExecutionDurationNanos(executionResult, System.nanoTime() - executionStartNanos);
         }
     }
 
