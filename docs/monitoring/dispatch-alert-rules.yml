@@ -1,0 +1,71 @@
+groups:
+  - name: ai-secretary-dispatch
+    rules:
+      - alert: AiSecretaryDispatchFailedBacklogHigh
+        expr: task_dispatch_failed_current > 20
+        for: 10m
+        labels:
+          severity: warning
+          component: task-dispatch
+        annotations:
+          summary: "AI Secretary dispatch FAILED backlog is high"
+          description: "FAILED dispatch records have stayed above 20 for more than 10 minutes. Check dispatch records, retry exhaustion, and external skill dependencies."
+
+      - alert: AiSecretaryDispatchRunningBacklogStuck
+        expr: task_dispatch_running_current > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: task-dispatch
+        annotations:
+          summary: "AI Secretary dispatch RUNNING records may be stuck"
+          description: "RUNNING dispatch records have stayed above 0 for more than 10 minutes. Check running timeout recovery, worker health, and DB updates."
+
+      - alert: AiSecretaryDispatchRetryExhausted
+        expr: task_dispatch_retry_exhausted_current > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: task-dispatch
+        annotations:
+          summary: "AI Secretary dispatch retries exhausted"
+          description: "At least one dispatch record has exhausted retry attempts. Inspect errorMessage and related execution logs."
+
+      - alert: AiSecretaryDispatchTimeoutRecoveryDetected
+        expr: increase(task_dispatch_timeout_recovered_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: task-dispatch
+        annotations:
+          summary: "AI Secretary dispatch timeout recovery occurred"
+          description: "RUNNING timeout recovery happened in the last 15 minutes. Check application restarts, JVM crashes, or long-running skills."
+
+      - alert: AiSecretaryDispatchFailureRateHigh
+        expr: |
+          (
+            sum(rate(task_dispatch_failed_total[10m]))
+            /
+            clamp_min(sum(rate(task_dispatch_succeeded_total[10m])) + sum(rate(task_dispatch_failed_total[10m])), 1)
+          ) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+          component: task-dispatch
+        annotations:
+          summary: "AI Secretary dispatch failure rate is high"
+          description: "Dispatch failure rate is above 20% for 10 minutes. Check failing skills, scheduler config, and downstream dependencies."
+
+      - alert: AiSecretaryDispatchExecutionP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(task_dispatch_execution_duration_seconds_bucket[10m])) by (le)
+          ) > 30
+        for: 10m
+        labels:
+          severity: warning
+          component: task-dispatch
+        annotations:
+          summary: "AI Secretary dispatch execution p95 is high"
+          description: "Dispatch execution p95 is above 30 seconds for 10 minutes. Check slow skills and downstream services."
