@@ -27,9 +27,11 @@ GET /actuator/prometheus
 | Gauge | `task_dispatch_failed_current` |
 | Gauge | `task_dispatch_retry_scheduled_current` |
 | Gauge | `task_dispatch_retry_exhausted_current` |
-| Timer | `task_dispatch_execution_duration` |
+| Timer | `task_dispatch_execution_duration{result="succeeded"}` |
+| Timer | `task_dispatch_execution_duration{result="failed"}` |
+| Timer | `task_dispatch_execution_duration{result="unknown"}` |
 
-> 注意：Micrometer Timer 在 Prometheus 中会展开为 `_seconds_count`、`_seconds_sum`、`_seconds_max`，若后续启用 histogram，还会有 `_seconds_bucket`。
+> 注意：Micrometer Timer 在 Prometheus 中会展开为 `_seconds_count`、`_seconds_sum`、`_seconds_max`，开启 histogram 后还会有 `_seconds_bucket`。
 
 ## 告警规则
 
@@ -124,22 +126,21 @@ severity: warning
 
 ### 6. 执行耗时 p95 过高
 
-如果 Timer 开启 histogram，可使用：
-
 ```promql
 histogram_quantile(
   0.95,
-  sum(rate(task_dispatch_execution_duration_seconds_bucket[10m])) by (le)
+  sum(rate(task_dispatch_execution_duration_seconds_bucket[10m])) by (le, result)
 ) > 30
 ```
 
-如果暂未开启 histogram，可先用平均耗时：
+建议：
 
-```promql
-rate(task_dispatch_execution_duration_seconds_sum[10m])
-/
-clamp_min(rate(task_dispatch_execution_duration_seconds_count[10m]), 1)
+```text
+for: 10m
+severity: warning
 ```
+
+说明：按 `result` 拆分统计，能看到成功和失败场景各自的 p95。
 
 ## Grafana 面板草案
 
@@ -173,11 +174,18 @@ clamp_min(rate(task_dispatch_execution_duration_seconds_count[10m]), 1)
 
 | Panel | 类型 | PromQL |
 |---|---|---|
-| Avg duration | Time series | `rate(task_dispatch_execution_duration_seconds_sum[10m]) / clamp_min(rate(task_dispatch_execution_duration_seconds_count[10m]), 1)` |
-| Max duration | Time series | `task_dispatch_execution_duration_seconds_max` |
-| P95 duration | Time series | `histogram_quantile(0.95, sum(rate(task_dispatch_execution_duration_seconds_bucket[10m])) by (le))` |
+| Avg duration by result | Time series | `sum(rate(task_dispatch_execution_duration_seconds_sum[10m])) by (result) / clamp_min(sum(rate(task_dispatch_execution_duration_seconds_count[10m])) by (result), 1)` |
+| Max duration by result | Time series | `max(task_dispatch_execution_duration_seconds_max) by (result)` |
+| P95 duration by result | Time series | `histogram_quantile(0.95, sum(rate(task_dispatch_execution_duration_seconds_bucket[10m])) by (le, result))` |
+| P99 duration by result | Time series | `histogram_quantile(0.99, sum(rate(task_dispatch_execution_duration_seconds_bucket[10m])) by (le, result))` |
 
-> 如果没有 `_bucket` 指标，说明 Timer histogram 暂未启用，P95 面板先隐藏或改用平均耗时。
+### Row 5：result 标签拆分
+
+| Panel | 类型 | PromQL |
+|---|---|---|
+| Duration count by result | Bar gauge | `sum(rate(task_dispatch_execution_duration_seconds_count[10m])) by (result)` |
+| Failed duration p95 | Stat | `histogram_quantile(0.95, sum(rate(task_dispatch_execution_duration_seconds_bucket{result="failed"}[10m])) by (le))` |
+| Succeeded duration p95 | Stat | `histogram_quantile(0.95, sum(rate(task_dispatch_execution_duration_seconds_bucket{result="succeeded"}[10m])) by (le))` |
 
 ## 建议阈值
 
@@ -193,14 +201,14 @@ clamp_min(rate(task_dispatch_execution_duration_seconds_count[10m]), 1)
 
 ## 当前边界
 
-1. 当前调度指标没有 `skillName/actionType/owner` 标签，无法直接按技能维度拆分。
-2. Gauge 每次 scrape 会执行数据库 count 查询，建议 Prometheus scrape interval 不低于 15s。
-3. p95 依赖 Timer histogram；如果未开启 histogram，Grafana 中先使用平均耗时和 max。
+1. 当前调度 Counter/Gauge 没有 `skillName/actionType/owner` 标签，无法直接按技能维度拆分。
+2. Timer 只有低基数 `result` 标签，不包含 `planId/actionId`。
+3. Gauge 每次 scrape 会执行数据库 count 查询，建议 Prometheus scrape interval 不低于 15s。
 4. 当前指标覆盖本地调度路径，不覆盖手动立即执行路径。
 
 ## 后续建议
 
-1. 给 Timer 增加有限标签，例如 `result=success|failed`。
-2. 开启 percentile histogram 支持 p95/p99。
-3. 增加 skill/actionType 维度指标，但必须限制枚举值，避免标签基数失控。
-4. 将告警规则加入部署目录，由环境级 Prometheus 加载。
+1. 增加 skill/actionType 维度指标，但必须限制枚举值，避免标签基数失控。
+2. 将告警规则加入部署目录，由环境级 Prometheus 加载。
+3. 根据实际数据校准 p95/p99 阈值。
+4. 对 `result="unknown"` 增加单独面板，持续出现时说明调度结果分支需要进一步排查。
