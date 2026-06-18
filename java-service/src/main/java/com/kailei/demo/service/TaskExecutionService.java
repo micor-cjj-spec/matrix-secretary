@@ -3,6 +3,7 @@ package com.kailei.demo.service;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskStatus;
 import com.kailei.demo.repository.TaskExecutionLogRepository;
+import com.kailei.demo.repository.TaskPlanRepository;
 import com.kailei.demo.skill.GenericSkillExecutor;
 import com.kailei.demo.skill.SkillCatalog;
 import com.kailei.demo.skill.SkillDefinition;
@@ -19,18 +20,25 @@ public class TaskExecutionService {
     private final GenericSkillExecutor genericSkillExecutor;
     private final TaskExecutionLogRepository executionLogRepository;
     private final CronScheduleService cronScheduleService;
+    private final TaskStateMachineService stateMachine;
+    private final TaskPlanRepository taskPlanRepository;
 
     public TaskExecutionService(SkillCatalog skillCatalog,
                                 GenericSkillExecutor genericSkillExecutor,
                                 TaskExecutionLogRepository executionLogRepository,
-                                CronScheduleService cronScheduleService) {
+                                CronScheduleService cronScheduleService,
+                                TaskStateMachineService stateMachine,
+                                TaskPlanRepository taskPlanRepository) {
         this.skillCatalog = skillCatalog;
         this.genericSkillExecutor = genericSkillExecutor;
         this.executionLogRepository = executionLogRepository;
         this.cronScheduleService = cronScheduleService;
+        this.stateMachine = stateMachine;
+        this.taskPlanRepository = taskPlanRepository;
     }
 
     public TaskAction confirmAction(String planId, String userId, TaskAction action, String operatorUserId) {
+        stateMachine.requireConfirmableAction(action);
         if (action.schedule() != null && action.schedule().isScheduled()) {
             TaskAction scheduledAction = action.withSchedule(cronScheduleService.ensureCronAndNextRun(action.schedule()));
             String note = "已进入调度队列: cron=" + scheduledAction.schedule().cron()
@@ -48,10 +56,25 @@ public class TaskExecutionService {
     }
 
     public TaskAction executeNow(String planId, String userId, TaskAction action, String operatorUserId) {
-        SkillDefinition skill = skillCatalog.getOrUnknown(action.actionType());
-        TaskAction next = genericSkillExecutor.execute(planId, userId, skill, action);
-        executionLogRepository.logStateChange(planId, action, next, operatorUserId);
-        return next;
+        stateMachine.requireExecutableAction(action);
+        TaskAction running = action.withStatus(TaskStatus.RUNNING, "Task execution started");
+        taskPlanRepository.markActionRunning(running, running.executionNote());
+        executionLogRepository.logStateChange(planId, action, running, operatorUserId);
+
+        try {
+            SkillDefinition skill = skillCatalog.getOrUnknown(action.actionType());
+            TaskAction executed = genericSkillExecutor.execute(planId, userId, skill, running);
+            TaskAction stored = taskPlanRepository.markActionResult(executed);
+            executionLogRepository.logStateChange(planId, running, stored, operatorUserId);
+            return stored;
+        } catch (RuntimeException ex) {
+            log.warn("Task action [{}] execution failed unexpectedly", action.actionId(), ex);
+            TaskAction failed = running.withStatus(TaskStatus.FAILED,
+                    "Task execution failed: " + ex.getClass().getSimpleName());
+            TaskAction stored = taskPlanRepository.markActionResult(failed);
+            executionLogRepository.logStateChange(planId, running, stored, operatorUserId);
+            return stored;
+        }
     }
 
     public TaskAction executeNow(String planId, TaskAction action, String operatorUserId) {

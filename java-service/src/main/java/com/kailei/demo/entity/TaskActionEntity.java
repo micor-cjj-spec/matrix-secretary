@@ -10,6 +10,8 @@ import org.dromara.autotable.annotation.Index;
 import org.dromara.autotable.annotation.PrimaryKey;
 import org.dromara.autotable.annotation.mysql.MysqlTypeConstant;
 
+import java.time.OffsetDateTime;
+
 @TableName("ai_task_action")
 @AutoTable(value = "ai_task_action", comment = "AI秘书任务动作表")
 public class TaskActionEntity {
@@ -75,6 +77,7 @@ public class TaskActionEntity {
     @ColumnComment("语义解析备注")
     private String analysisNote;
 
+    @Index
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 32)
     @ColumnComment("动作状态")
     private String status;
@@ -85,6 +88,31 @@ public class TaskActionEntity {
 
     @ColumnComment("排序号")
     private Integer sortOrder;
+
+    @Index
+    @ColumnComment("下次触发时间，用于调度器按到期任务扫描")
+    private OffsetDateTime nextFireTime;
+
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 128)
+    @ColumnComment("调度执行锁持有者")
+    private String lockedBy;
+
+    @ColumnComment("调度执行锁获取时间")
+    private OffsetDateTime lockedAt;
+
+    @ColumnComment("执行尝试次数")
+    private Integer attemptCount;
+
+    @ColumnComment("最大重试次数")
+    private Integer maxRetryCount;
+
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 128)
+    @ColumnComment("幂等键")
+    private String idempotencyKey;
+
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 1024)
+    @ColumnComment("最近一次错误信息")
+    private String lastError;
 
     public String getActionId() { return actionId; }
     public void setActionId(String actionId) { this.actionId = actionId; }
@@ -122,4 +150,18 @@ public class TaskActionEntity {
     public void setExecutionNote(String executionNote) { this.executionNote = executionNote; }
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
+    public OffsetDateTime getNextFireTime() { return nextFireTime; }
+    public void setNextFireTime(OffsetDateTime nextFireTime) { this.nextFireTime = nextFireTime; }
+    public String getLockedBy() { return lockedBy; }
+    public void setLockedBy(String lockedBy) { this.lockedBy = lockedBy; }
+    public OffsetDateTime getLockedAt() { return lockedAt; }
+    public void setLockedAt(OffsetDateTime lockedAt) { this.lockedAt = lockedAt; }
+    public Integer getAttemptCount() { return attemptCount; }
+    public void setAttemptCount(Integer attemptCount) { this.attemptCount = attemptCount; }
+    public Integer getMaxRetryCount() { return maxRetryCount; }
+    public void setMaxRetryCount(Integer maxRetryCount) { this.maxRetryCount = maxRetryCount; }
+    public String getIdempotencyKey() { return idempotencyKey; }
+    public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
+    public String getLastError() { return lastError; }
+    public void setLastError(String lastError) { this.lastError = lastError; }
 }

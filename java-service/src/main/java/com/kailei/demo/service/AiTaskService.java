@@ -1,6 +1,7 @@
 package com.kailei.demo.service;
 
 import com.kailei.demo.client.PythonSemanticClient;
+import com.kailei.demo.entity.TaskActionEntity;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.ExecutionSummary;
@@ -21,6 +22,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.IntStream;
 
@@ -28,6 +30,9 @@ import java.util.stream.IntStream;
 public class AiTaskService {
 
     private static final String SYSTEM_OPERATOR = "system-scheduler";
+    private static final int DISPATCH_BATCH_SIZE = 100;
+    private static final long LOCK_TIMEOUT_MINUTES = 10;
+    private static final long RUNNING_TIMEOUT_MINUTES = 30;
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
@@ -36,6 +41,7 @@ public class AiTaskService {
     private final CronScheduleService cronScheduleService;
     private final TaskExecutionLogRepository executionLogRepository;
     private final AiSessionRepository sessionRepository;
+    private final TaskStateMachineService stateMachine;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
@@ -43,7 +49,8 @@ public class AiTaskService {
                          SkillCatalog skillCatalog,
                          CronScheduleService cronScheduleService,
                          TaskExecutionLogRepository executionLogRepository,
-                         AiSessionRepository sessionRepository) {
+                         AiSessionRepository sessionRepository,
+                         TaskStateMachineService stateMachine) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
@@ -51,6 +58,7 @@ public class AiTaskService {
         this.cronScheduleService = cronScheduleService;
         this.executionLogRepository = executionLogRepository;
         this.sessionRepository = sessionRepository;
+        this.stateMachine = stateMachine;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
@@ -93,9 +101,7 @@ public class AiTaskService {
         String requestedOperator = request == null ? null : request.operatorUserId();
         ensureOperatorCanAccess(plan, requestedOperator);
         String effectiveOperator = effectiveOperator(requestedOperator, plan.userId());
-        if (plan.status() != TaskStatus.WAITING_CONFIRM) {
-            throw new IllegalArgumentException("只有 WAITING_CONFIRM 状态的任务计划允许编辑: " + planId);
-        }
+        stateMachine.requireEditablePlan(plan);
 
         List<TaskAction> nextActions = new ArrayList<>();
         boolean matched = false;
@@ -105,9 +111,7 @@ public class AiTaskService {
                 continue;
             }
             matched = true;
-            if (action.status() != TaskStatus.WAITING_CONFIRM) {
-                throw new IllegalArgumentException("只有 WAITING_CONFIRM 状态的任务动作允许编辑: " + actionId);
-            }
+            stateMachine.requireEditableAction(action);
             TaskSchedule nextSchedule = request == null || request.schedule() == null
                     ? null
                     : cronScheduleService.ensureCronAndNextRun(request.schedule());
@@ -119,12 +123,12 @@ public class AiTaskService {
                     request == null ? null : request.args(),
                     request == null ? null : request.priority(),
                     request == null ? null : request.requiresConfirmation()
-            ).withStatus(TaskStatus.WAITING_CONFIRM, "用户已编辑任务参数，等待确认");
+            ).withStatus(TaskStatus.WAITING_CONFIRM, "Task edited and waiting for confirmation");
             executionLogRepository.logStateChange(plan.planId(), action, edited, effectiveOperator);
             nextActions.add(edited);
         }
         if (!matched) {
-            throw new IllegalArgumentException("任务动作不存在: " + actionId);
+            throw new IllegalArgumentException("Task action not found: " + actionId);
         }
         TaskPlan saved = repository.save(plan.withStatus(TaskStatus.WAITING_CONFIRM, nextActions));
         sessionRepository.updateAfterPlanChange(saved);
@@ -155,7 +159,7 @@ public class AiTaskService {
                 item.sourceSentence(),
                 item.analysisNote(),
                 TaskStatus.WAITING_CONFIRM,
-                "等待用户确认"
+                "Waiting for user confirmation"
         );
     }
 
@@ -170,7 +174,7 @@ public class AiTaskService {
         TaskPlan plan = get(planId);
         ensureOperatorCanAccess(plan, operatorUserId);
         String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
-        if (plan.status() != TaskStatus.WAITING_CONFIRM) {
+        if (!stateMachine.canConfirmPlan(plan)) {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
 
@@ -178,7 +182,7 @@ public class AiTaskService {
                 .map(action -> executionService.confirmAction(plan.planId(), plan.userId(), action, effectiveOperator))
                 .toList();
 
-        TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
+        TaskPlan nextPlan = plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions);
         TaskPlan saved = repository.save(nextPlan);
         sessionRepository.updateAfterPlanChange(saved);
         return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
@@ -191,19 +195,15 @@ public class AiTaskService {
         if (plan.status() == TaskStatus.CANCELLED) {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
-        boolean hasExecutedAction = plan.tasks().stream()
-                .anyMatch(action -> action.status() == TaskStatus.EXECUTED);
-        if (hasExecutedAction) {
-            throw new IllegalArgumentException("任务已存在已执行动作，不能整体取消: " + planId);
-        }
+        stateMachine.requireCancellablePlan(plan);
 
-        String cancelReason = reason == null || reason.isBlank() ? "用户主动取消" : reason;
+        String cancelReason = reason == null || reason.isBlank() ? "User cancelled" : reason;
         List<TaskAction> nextActions = plan.tasks().stream()
                 .map(action -> {
                     if (action.status() == TaskStatus.CANCELLED) {
                         return action;
                     }
-                    TaskAction next = action.withStatus(TaskStatus.CANCELLED, "任务已取消: " + cancelReason);
+                    TaskAction next = action.withStatus(TaskStatus.CANCELLED, "Task cancelled: " + cancelReason);
                     executionLogRepository.logStateChange(plan.planId(), action, next, effectiveOperator);
                     return next;
                 })
@@ -226,15 +226,13 @@ public class AiTaskService {
                 continue;
             }
             matched = true;
-            if (action.status() != TaskStatus.FAILED) {
-                throw new IllegalArgumentException("只有 FAILED 状态的动作允许重试: " + actionId);
-            }
+            stateMachine.requireRetryableAction(action);
             nextActions.add(executionService.executeNow(plan.planId(), plan.userId(), action, effectiveOperator));
         }
         if (!matched) {
-            throw new IllegalArgumentException("任务动作不存在: " + actionId);
+            throw new IllegalArgumentException("Task action not found: " + actionId);
         }
-        TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
+        TaskPlan nextPlan = plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions);
         TaskPlan saved = repository.save(nextPlan);
         sessionRepository.updateAfterPlanChange(saved);
         return new ConfirmTaskResponse(saved.planId(), saved.status(), summarize(saved.tasks()), saved);
@@ -242,7 +240,7 @@ public class AiTaskService {
 
     public TaskPlan get(String planId) {
         return repository.findById(planId)
-                .orElseThrow(() -> new IllegalArgumentException("任务计划不存在: " + planId));
+                .orElseThrow(() -> new IllegalArgumentException("Task plan not found: " + planId));
     }
 
     public TaskPlan get(String planId, String userId) {
@@ -264,9 +262,9 @@ public class AiTaskService {
 
     public SessionState getSession(String sessionId, String userId) {
         SessionState session = sessionRepository.findById(sessionId)
-                .orElseThrow(() -> new IllegalArgumentException("会话不存在: " + sessionId));
+                .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
         if (userId != null && !userId.isBlank() && session.userId() != null && !session.userId().equals(userId)) {
-            throw new IllegalArgumentException("会话不存在或无权访问: " + sessionId);
+            throw new IllegalArgumentException("Session not found or access denied: " + sessionId);
         }
         return session;
     }
@@ -278,15 +276,76 @@ public class AiTaskService {
 
     public void dispatchDueOnceTasks() {
         OffsetDateTime now = OffsetDateTime.now();
-        repository.findAll().forEach(plan -> {
+        OffsetDateTime lockExpiredBefore = now.minusMinutes(LOCK_TIMEOUT_MINUTES);
+        OffsetDateTime runningExpiredBefore = now.minusMinutes(RUNNING_TIMEOUT_MINUTES);
+        recoverTimedOutRunningActions(now, runningExpiredBefore);
+        String lockOwner = SYSTEM_OPERATOR + "-" + UUID.randomUUID().toString().substring(0, 8);
+        repository.findDueScheduledActions(now, lockExpiredBefore, DISPATCH_BATCH_SIZE)
+                .forEach(dueAction -> dispatchLockedAction(dueAction, now, lockExpiredBefore, lockOwner));
+    }
+
+    private void recoverTimedOutRunningActions(OffsetDateTime now, OffsetDateTime runningExpiredBefore) {
+        repository.findTimedOutRunningActions(runningExpiredBefore, DISPATCH_BATCH_SIZE)
+                .forEach(runningAction -> recoverTimedOutAction(runningAction, now, runningExpiredBefore));
+    }
+
+    private void recoverTimedOutAction(TaskActionEntity runningAction,
+                                       OffsetDateTime now,
+                                       OffsetDateTime runningExpiredBefore) {
+        TaskPlan plan = repository.findById(runningAction.getPlanId()).orElse(null);
+        if (plan == null) {
+            return;
+        }
+        List<TaskAction> nextActions = plan.tasks().stream()
+                .map(action -> recoverTimedOutActionIfMatched(plan, runningAction, action, now, runningExpiredBefore))
+                .toList();
+        if (!nextActions.equals(plan.tasks())) {
+            TaskPlan saved = repository.save(plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions));
+            sessionRepository.updateAfterPlanChange(saved);
+        }
+    }
+
+    private TaskAction recoverTimedOutActionIfMatched(TaskPlan plan,
+                                                      TaskActionEntity runningAction,
+                                                      TaskAction action,
+                                                      OffsetDateTime now,
+                                                      OffsetDateTime runningExpiredBefore) {
+        if (!action.actionId().equals(runningAction.getActionId())) {
+            return action;
+        }
+        Optional<TaskAction> recovered = repository.markActionTimeoutIfStillRunning(action, now, runningExpiredBefore);
+        recovered.ifPresent(next -> executionLogRepository.logStateChange(plan.planId(), action, next, SYSTEM_OPERATOR));
+        return recovered.orElse(action);
+    }
+
+    private void dispatchLockedAction(TaskActionEntity dueAction,
+                                      OffsetDateTime now,
+                                      OffsetDateTime lockExpiredBefore,
+                                      String lockOwner) {
+        if (!repository.tryLockScheduledAction(dueAction.getActionId(), now, lockExpiredBefore, lockOwner)) {
+            return;
+        }
+        try {
+            TaskPlan plan = repository.findById(dueAction.getPlanId()).orElse(null);
+            if (plan == null) {
+                repository.releaseActionLock(dueAction.getActionId(), lockOwner);
+                return;
+            }
             List<TaskAction> nextActions = plan.tasks().stream()
-                    .map(action -> dispatchIfDue(plan, action, now))
+                    .map(action -> action.actionId().equals(dueAction.getActionId())
+                            ? dispatchIfDue(plan, action, now)
+                            : action)
                     .toList();
             if (!nextActions.equals(plan.tasks())) {
-                TaskPlan saved = repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
+                TaskPlan saved = repository.save(plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions));
                 sessionRepository.updateAfterPlanChange(saved);
+            } else {
+                repository.releaseActionLock(dueAction.getActionId(), lockOwner);
             }
-        });
+        } catch (RuntimeException ex) {
+            repository.releaseActionLock(dueAction.getActionId(), lockOwner);
+            throw ex;
+        }
     }
 
     private void ensureSameUser(TaskPlan plan, String userId) {
@@ -294,7 +353,7 @@ public class AiTaskService {
             return;
         }
         if (plan.userId() == null || !plan.userId().equals(userId)) {
-            throw new IllegalArgumentException("任务计划不存在或无权访问: " + plan.planId());
+            throw new IllegalArgumentException("Task plan not found or access denied: " + plan.planId());
         }
     }
 
@@ -303,7 +362,7 @@ public class AiTaskService {
             return;
         }
         if (operatorUserId == null || operatorUserId.isBlank() || !plan.userId().equals(operatorUserId)) {
-            throw new IllegalArgumentException("任务计划不存在或无权操作: " + plan.planId());
+            throw new IllegalArgumentException("Task plan not found or access denied: " + plan.planId());
         }
     }
 
@@ -311,22 +370,6 @@ public class AiTaskService {
         return operatorUserId == null || operatorUserId.isBlank()
                 ? fallbackUserId
                 : operatorUserId;
-    }
-
-    private TaskStatus resolvePlanStatus(List<TaskAction> actions) {
-        if (actions.stream().allMatch(action -> action.status() == TaskStatus.CANCELLED)) {
-            return TaskStatus.CANCELLED;
-        }
-        if (actions.stream().anyMatch(action -> action.status() == TaskStatus.SCHEDULED)) {
-            return TaskStatus.SCHEDULED;
-        }
-        if (actions.stream().anyMatch(action -> action.status() == TaskStatus.FAILED)) {
-            return TaskStatus.FAILED;
-        }
-        if (actions.stream().allMatch(action -> action.status() == TaskStatus.EXECUTED)) {
-            return TaskStatus.EXECUTED;
-        }
-        return TaskStatus.CONFIRMED;
     }
 
     private ExecutionSummary summarize(List<TaskAction> actions) {
@@ -337,12 +380,12 @@ public class AiTaskService {
     }
 
     private TaskAction dispatchIfDue(TaskPlan plan, TaskAction action, OffsetDateTime now) {
-        if (action.status() != TaskStatus.SCHEDULED || action.schedule() == null) {
+        if (!stateMachine.canDispatchScheduledAction(action) || action.schedule() == null) {
             return action;
         }
         TaskSchedule schedule = cronScheduleService.ensureCronAndNextRun(action.schedule());
         if (schedule == null || schedule.effectiveRunAt() == null) {
-            return action.withStatus(TaskStatus.FAILED, "调度任务缺少可执行时间或cron表达式");
+            return action.withStatus(TaskStatus.FAILED, "Scheduled task is missing executable time or cron");
         }
         try {
             OffsetDateTime runAt = OffsetDateTime.parse(schedule.effectiveRunAt());
@@ -353,13 +396,13 @@ public class AiTaskService {
             TaskAction executed = executionService.executeNow(plan.planId(), plan.userId(), executable, SYSTEM_OPERATOR);
             if (schedule.isRecurring() && executed.status() == TaskStatus.EXECUTED) {
                 TaskSchedule nextSchedule = cronScheduleService.markTriggered(schedule, now);
-                String note = "周期任务已执行，下一次触发: cron=" + nextSchedule.cron()
+                String note = "Recurring task executed. Next run: cron=" + nextSchedule.cron()
                         + ", nextRunAt=" + nextSchedule.nextRunAt();
                 return executed.withSchedule(nextSchedule).withStatus(TaskStatus.SCHEDULED, note);
             }
             return executed;
         } catch (DateTimeParseException ex) {
-            return action.withStatus(TaskStatus.FAILED, "时间格式无法解析: " + schedule.effectiveRunAt());
+            return action.withStatus(TaskStatus.FAILED, "Unable to parse schedule time: " + schedule.effectiveRunAt());
         }
     }
 }
