@@ -1,6 +1,7 @@
 package com.kailei.demo.service;
 
 import com.kailei.demo.client.PythonSemanticClient;
+import com.kailei.demo.entity.TaskActionEntity;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.ExecutionSummary;
@@ -28,6 +29,8 @@ import java.util.stream.IntStream;
 public class AiTaskService {
 
     private static final String SYSTEM_OPERATOR = "system-scheduler";
+    private static final int DISPATCH_BATCH_SIZE = 100;
+    private static final long LOCK_TIMEOUT_MINUTES = 10;
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
@@ -278,15 +281,40 @@ public class AiTaskService {
 
     public void dispatchDueOnceTasks() {
         OffsetDateTime now = OffsetDateTime.now();
-        repository.findAll().forEach(plan -> {
+        OffsetDateTime lockExpiredBefore = now.minusMinutes(LOCK_TIMEOUT_MINUTES);
+        String lockOwner = SYSTEM_OPERATOR + "-" + UUID.randomUUID().toString().substring(0, 8);
+        repository.findDueScheduledActions(now, lockExpiredBefore, DISPATCH_BATCH_SIZE)
+                .forEach(dueAction -> dispatchLockedAction(dueAction, now, lockExpiredBefore, lockOwner));
+    }
+
+    private void dispatchLockedAction(TaskActionEntity dueAction,
+                                      OffsetDateTime now,
+                                      OffsetDateTime lockExpiredBefore,
+                                      String lockOwner) {
+        if (!repository.tryLockScheduledAction(dueAction.getActionId(), now, lockExpiredBefore, lockOwner)) {
+            return;
+        }
+        try {
+            TaskPlan plan = repository.findById(dueAction.getPlanId()).orElse(null);
+            if (plan == null) {
+                repository.releaseActionLock(dueAction.getActionId(), lockOwner);
+                return;
+            }
             List<TaskAction> nextActions = plan.tasks().stream()
-                    .map(action -> dispatchIfDue(plan, action, now))
+                    .map(action -> action.actionId().equals(dueAction.getActionId())
+                            ? dispatchIfDue(plan, action, now)
+                            : action)
                     .toList();
             if (!nextActions.equals(plan.tasks())) {
                 TaskPlan saved = repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
                 sessionRepository.updateAfterPlanChange(saved);
+            } else {
+                repository.releaseActionLock(dueAction.getActionId(), lockOwner);
             }
-        });
+        } catch (RuntimeException ex) {
+            repository.releaseActionLock(dueAction.getActionId(), lockOwner);
+            throw ex;
+        }
     }
 
     private void ensureSameUser(TaskPlan plan, String userId) {
