@@ -114,6 +114,12 @@ public class TaskExecutionLogRepository {
                 .orderByDesc(TaskExecutionLogEntity::getCreatedAt));
     }
 
+    public List<TaskExecutionLogEntity> findByTraceId(String traceId) {
+        return mapper.selectList(new LambdaQueryWrapper<TaskExecutionLogEntity>()
+                .eq(TaskExecutionLogEntity::getTraceId, traceId)
+                .orderByDesc(TaskExecutionLogEntity::getCreatedAt));
+    }
+
     private String resolveEventType(TaskAction before, TaskAction after) {
         if (after == null || after.status() == null) {
             return EVENT_STATE_CHANGE;
