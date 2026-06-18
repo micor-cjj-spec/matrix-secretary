@@ -21,6 +21,8 @@ GET /api/ai-task/dispatch-records
 | `dispatchOwner` | string | 调度持有者，例如 `local-scheduler` |
 | `retryExhausted` | boolean | `true` 查询重试耗尽记录；`false` 查询仍可重试记录 |
 | `retryDue` | boolean | `true` 查询已到重试时间记录；`false` 查询未到重试时间记录 |
+| `sortField` | string | 排序字段：`triggerAt`、`startedAt`、`finishedAt`、`createdAt`、`nextRetryAt`；默认 `triggerAt` |
+| `sortDirection` | string | 排序方向：`ASC` 或 `DESC`；默认 `DESC` |
 | `page` | long | 页码，默认走 `PageResult` 标准归一化 |
 | `size` | long | 每页数量，默认走 `PageResult` 标准归一化 |
 
@@ -33,6 +35,18 @@ GET /api/ai-task/dispatch-records
 | `finishedAt` | `finished_at` | 查询最近完成、最近失败或最近成功的记录 |
 
 非法或空 `timeField` 会回退为 `triggerAt`。
+
+## 排序字段说明
+
+| `sortField` | 排序字段 | 适用场景 |
+|---|---|---|
+| `triggerAt` | `trigger_at` | 默认排序，按任务触发时间查看 |
+| `startedAt` | `started_at` | 找最早卡住的 RUNNING 记录 |
+| `finishedAt` | `finished_at` | 查看最近完成、最近失败、最近成功记录 |
+| `createdAt` | `created_at` | 按记录创建时间查看 |
+| `nextRetryAt` | `next_retry_at` | 查看最近即将重试或最早到期重试记录 |
+
+非法或空 `sortField` 会回退为 `triggerAt`。`sortDirection` 只有 `ASC` 会升序，其他值默认降序。
 
 ## 返回结构
 
@@ -78,10 +92,22 @@ GET /api/ai-task/dispatch-records?status=FAILED&timeField=triggerAt&startTime=20
 GET /api/ai-task/dispatch-records?status=RUNNING&timeField=startedAt&startTime=2026-06-18T00:00:00%2B08:00&page=1&size=20
 ```
 
+### 按开始执行时间升序查询最早卡住的 RUNNING 记录
+
+```http
+GET /api/ai-task/dispatch-records?status=RUNNING&sortField=startedAt&sortDirection=ASC&page=1&size=20
+```
+
 ### 按完成时间查询最近失败记录
 
 ```http
-GET /api/ai-task/dispatch-records?status=FAILED&timeField=finishedAt&startTime=2026-06-18T00:00:00%2B08:00&page=1&size=20
+GET /api/ai-task/dispatch-records?status=FAILED&timeField=finishedAt&startTime=2026-06-18T00:00:00%2B08:00&sortField=finishedAt&sortDirection=DESC&page=1&size=20
+```
+
+### 按下次重试时间查询最早到期重试记录
+
+```http
+GET /api/ai-task/dispatch-records?retryExhausted=false&sortField=nextRetryAt&sortDirection=ASC&page=1&size=20
 ```
 
 ### 查询重试耗尽记录
@@ -153,12 +179,13 @@ GET /api/ai-task/dispatch-records?status=FAILED&dispatchOwner=local-scheduler&pa
 |---|---|
 | 点击 FAILED 卡片 | `/api/ai-task/dispatch-records?status=FAILED&page=1&size=20` |
 | 点击 RUNNING 卡片 | `/api/ai-task/dispatch-records?status=RUNNING&page=1&size=20` |
-| 查询最近开始执行的 RUNNING | `/api/ai-task/dispatch-records?status=RUNNING&timeField=startedAt&startTime=...&page=1&size=20` |
-| 查询最近完成的 FAILED | `/api/ai-task/dispatch-records?status=FAILED&timeField=finishedAt&startTime=...&page=1&size=20` |
+| 查询最早卡住 RUNNING | `/api/ai-task/dispatch-records?status=RUNNING&sortField=startedAt&sortDirection=ASC&page=1&size=20` |
+| 查询最近开始执行的 RUNNING | `/api/ai-task/dispatch-records?status=RUNNING&timeField=startedAt&startTime=...&sortField=startedAt&sortDirection=DESC&page=1&size=20` |
+| 查询最近完成的 FAILED | `/api/ai-task/dispatch-records?status=FAILED&timeField=finishedAt&startTime=...&sortField=finishedAt&sortDirection=DESC&page=1&size=20` |
 | 点击重试耗尽卡片 | `/api/ai-task/dispatch-records?retryExhausted=true&page=1&size=20` |
-| 点击等待重试卡片 | `/api/ai-task/dispatch-records?retryExhausted=false&page=1&size=20` |
-| 点击已到期重试卡片 | `/api/ai-task/dispatch-records?retryDue=true&page=1&size=20` |
-| 点击未到期重试卡片 | `/api/ai-task/dispatch-records?retryDue=false&page=1&size=20` |
+| 点击等待重试卡片 | `/api/ai-task/dispatch-records?retryExhausted=false&sortField=nextRetryAt&sortDirection=ASC&page=1&size=20` |
+| 点击已到期重试卡片 | `/api/ai-task/dispatch-records?retryDue=true&sortField=nextRetryAt&sortDirection=ASC&page=1&size=20` |
+| 点击未到期重试卡片 | `/api/ai-task/dispatch-records?retryDue=false&sortField=nextRetryAt&sortDirection=ASC&page=1&size=20` |
 | 任务详情页 dispatch records | `/api/ai-task/dispatch-records?planId={planId}&page=1&size=20` |
 | action 详情页 dispatch records | `/api/ai-task/dispatch-records?planId={planId}&actionId={actionId}&page=1&size=20` |
 
@@ -203,14 +230,15 @@ GET /api/ai-task/{planId}/actions/{actionId}/dispatch-records
 2. `retryExhausted=true/false` 会隐含 `status=FAILED` 条件。
 3. `retryDue=true/false` 会隐含 `status=FAILED`、`nextRetryAt IS NOT NULL`、`retryCount < maxRetryCount` 条件。
 4. 如果同时传入互相矛盾的条件，例如 `status=RUNNING&retryDue=true` 或 `retryExhausted=true&retryDue=true`，会返回空结果。
-5. `timeField` 仅影响 `startTime/endTime`，不影响默认排序；默认仍按 `triggerAt DESC, createdAt DESC` 排序。
-6. `timeField=finishedAt` 不会自动排除 `finishedAt IS NULL` 的记录；使用 `startTime/endTime` 时 SQL 条件会自然过滤掉空值。
+5. `timeField` 仅影响 `startTime/endTime`，不影响默认排序。
+6. `sortField` 仅影响全局接口，不影响旧的 plan/action 维度兼容接口。
+7. `sortField=finishedAt` 不会自动排除 `finishedAt IS NULL` 的记录；需要排除空值时建议同时传 `timeField=finishedAt&startTime=...`。
 
 ## 下一步
 
 继续生产化建议：
 
 1. 给全局 dispatch records 查询接口加管理权限。
-2. 增加排序字段 `sortField`，支持按 `startedAt/finishedAt` 排序。
-3. 前端实现失败调度记录列表页和重试耗尽列表页。
-4. 逐步迁移旧的 plan/action dispatch records 接口到统一查询接口。
+2. 前端实现失败调度记录列表页和重试耗尽列表页。
+3. 逐步迁移旧的 plan/action dispatch records 接口到统一查询接口。
+4. 后续可增加更多专用筛选，例如 `hasError=true`、`keyword=...`。
