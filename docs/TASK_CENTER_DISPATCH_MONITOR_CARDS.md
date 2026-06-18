@@ -53,6 +53,17 @@ export interface TaskDispatchMetricsSummary {
 
 > 注意：Counter 是当前 Java 进程内累计值，应用重启后会从 0 开始；长期趋势仍以 Prometheus/Grafana 为准。
 
+### 全局 Dispatch records 查询
+
+```http
+GET /api/ai-task/dispatch-records?status=FAILED&page=1&size=20
+GET /api/ai-task/dispatch-records?status=RUNNING&page=1&size=20
+GET /api/ai-task/dispatch-records?retryExhausted=true&page=1&size=20
+GET /api/ai-task/dispatch-records?retryExhausted=false&page=1&size=20
+```
+
+用于任务中心监控页展示失败列表、RUNNING 列表、重试耗尽列表和等待重试列表。
+
 ### 任务详情聚合
 
 ```http
@@ -61,13 +72,13 @@ GET /api/ai-task/{planId}/detail?userId=xxx&recentLogSize=20&recentDispatchSize=
 
 用于用户从监控卡片下钻到任务详情。
 
-### Dispatch records 查询
+### Plan 维度 Dispatch records 查询
 
 ```http
 GET /api/ai-task/{planId}/dispatch-records?status=FAILED&page=1&size=20
 ```
 
-用于失败列表和详情页继续分页查询。
+用于任务详情页继续分页查询。
 
 ## 页面布局草案
 
@@ -228,14 +239,15 @@ export function useDispatchMetricsSummary(refreshIntervalMs = 15000) {
 
 | 用户点击 | 跳转建议 |
 |---|---|
-| RUNNING 当前值 | Dispatch record 列表，过滤 `status=RUNNING` |
-| FAILED 当前值 | Dispatch record 列表，过滤 `status=FAILED` |
-| 重试耗尽 | Dispatch record 列表，过滤 `status=FAILED`，前端标记 `retryCount >= maxRetryCount` |
+| RUNNING 当前值 | `/api/ai-task/dispatch-records?status=RUNNING&page=1&size=20` |
+| FAILED 当前值 | `/api/ai-task/dispatch-records?status=FAILED&page=1&size=20` |
+| 等待重试 | `/api/ai-task/dispatch-records?retryExhausted=false&page=1&size=20` |
+| 重试耗尽 | `/api/ai-task/dispatch-records?retryExhausted=true&page=1&size=20` |
 | 某条 dispatch record | 任务详情页 `/api/ai-task/{planId}/detail` |
 
 ## 当前边界
 
-1. 后端摘要接口暂未内置权限控制，正式接入前端管理页时应加管理端鉴权。
+1. 后端摘要接口和全局 dispatch records 接口暂未内置权限控制，正式接入前端管理页时应加管理端鉴权。
 2. 多实例部署时，Counter 是单实例当前进程值；全局累计趋势应从 Prometheus 获取。
 3. 当前接口不返回耗时 p95/p99，耗时类面板仍建议读取 Prometheus。
 4. 当前仓库没有前端工程，本设计是接口对接草案，后续接入实际 Vue 项目时再落地组件。
