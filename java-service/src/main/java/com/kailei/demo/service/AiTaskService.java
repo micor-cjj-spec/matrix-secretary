@@ -31,6 +31,7 @@ public class AiTaskService {
     private static final String SYSTEM_OPERATOR = "system-scheduler";
     private static final int DISPATCH_BATCH_SIZE = 100;
     private static final long LOCK_TIMEOUT_MINUTES = 10;
+    private static final long RUNNING_TIMEOUT_MINUTES = 30;
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
@@ -275,9 +276,37 @@ public class AiTaskService {
     public void dispatchDueOnceTasks() {
         OffsetDateTime now = OffsetDateTime.now();
         OffsetDateTime lockExpiredBefore = now.minusMinutes(LOCK_TIMEOUT_MINUTES);
+        OffsetDateTime runningExpiredBefore = now.minusMinutes(RUNNING_TIMEOUT_MINUTES);
+        recoverTimedOutRunningActions(now, runningExpiredBefore);
         String lockOwner = SYSTEM_OPERATOR + "-" + UUID.randomUUID().toString().substring(0, 8);
         repository.findDueScheduledActions(now, lockExpiredBefore, DISPATCH_BATCH_SIZE)
                 .forEach(dueAction -> dispatchLockedAction(dueAction, now, lockExpiredBefore, lockOwner));
+    }
+
+    private void recoverTimedOutRunningActions(OffsetDateTime now, OffsetDateTime runningExpiredBefore) {
+        repository.findTimedOutRunningActions(runningExpiredBefore, DISPATCH_BATCH_SIZE)
+                .forEach(runningAction -> recoverTimedOutAction(runningAction, now));
+    }
+
+    private void recoverTimedOutAction(TaskActionEntity runningAction, OffsetDateTime now) {
+        TaskPlan plan = repository.findById(runningAction.getPlanId()).orElse(null);
+        if (plan == null) {
+            return;
+        }
+        List<TaskAction> nextActions = plan.tasks().stream()
+                .map(action -> {
+                    if (!action.actionId().equals(runningAction.getActionId())) {
+                        return action;
+                    }
+                    TaskAction recovered = repository.markActionTimeout(action, now);
+                    executionLogRepository.logStateChange(plan.planId(), action, recovered, SYSTEM_OPERATOR);
+                    return recovered;
+                })
+                .toList();
+        if (!nextActions.equals(plan.tasks())) {
+            TaskPlan saved = repository.save(plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions));
+            sessionRepository.updateAfterPlanChange(saved);
+        }
     }
 
     private void dispatchLockedAction(TaskActionEntity dueAction,
