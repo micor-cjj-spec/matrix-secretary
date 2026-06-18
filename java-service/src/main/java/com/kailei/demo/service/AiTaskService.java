@@ -1,6 +1,7 @@
 package com.kailei.demo.service;
 
 import com.kailei.demo.client.PythonSemanticClient;
+import com.kailei.demo.entity.TaskActionEntity;
 import com.kailei.demo.model.ConfirmTaskResponse;
 import com.kailei.demo.model.EditTaskActionRequest;
 import com.kailei.demo.model.ExecutionSummary;
@@ -29,6 +30,7 @@ import java.util.stream.IntStream;
 public class AiTaskService {
 
     private static final String SYSTEM_OPERATOR = "system-scheduler";
+    private static final int DISPATCH_BATCH_SIZE = 100;
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
@@ -275,9 +277,16 @@ public class AiTaskService {
 
     public void dispatchDueOnceTasks() {
         OffsetDateTime now = OffsetDateTime.now();
-        repository.findAll().forEach(plan -> {
+        repository.findDueScheduledActions(now, DISPATCH_BATCH_SIZE)
+                .forEach(dueAction -> dispatchDueAction(dueAction, now));
+    }
+
+    private void dispatchDueAction(TaskActionEntity dueAction, OffsetDateTime now) {
+        repository.findById(dueAction.getPlanId()).ifPresent(plan -> {
             List<TaskAction> nextActions = plan.tasks().stream()
-                    .map(action -> dispatchIfDue(plan, action, now))
+                    .map(action -> action.actionId().equals(dueAction.getActionId())
+                            ? dispatchIfDue(plan, action, now)
+                            : action)
                     .toList();
             if (!nextActions.equals(plan.tasks())) {
                 TaskPlan saved = repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
