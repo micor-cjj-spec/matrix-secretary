@@ -19,19 +19,22 @@ public class TaskExecutionService {
     private final GenericSkillExecutor genericSkillExecutor;
     private final TaskExecutionLogRepository executionLogRepository;
     private final CronScheduleService cronScheduleService;
+    private final TaskStateMachineService stateMachineService;
 
     public TaskExecutionService(SkillCatalog skillCatalog,
                                 GenericSkillExecutor genericSkillExecutor,
                                 TaskExecutionLogRepository executionLogRepository,
-                                CronScheduleService cronScheduleService) {
+                                CronScheduleService cronScheduleService,
+                                TaskStateMachineService stateMachineService) {
         this.skillCatalog = skillCatalog;
         this.genericSkillExecutor = genericSkillExecutor;
         this.executionLogRepository = executionLogRepository;
         this.cronScheduleService = cronScheduleService;
+        this.stateMachineService = stateMachineService;
     }
 
     public TaskAction confirmAction(String planId, String userId, TaskAction action, String operatorUserId) {
-        if (action.schedule() != null && action.schedule().isScheduled()) {
+        if (stateMachineService.canSchedule(action)) {
             TaskAction scheduledAction = action.withSchedule(cronScheduleService.ensureCronAndNextRun(action.schedule()));
             String note = "已进入调度队列: cron=" + scheduledAction.schedule().cron()
                     + ", nextRunAt=" + scheduledAction.schedule().effectiveRunAt();
@@ -48,6 +51,7 @@ public class TaskExecutionService {
     }
 
     public TaskAction executeNow(String planId, String userId, TaskAction action, String operatorUserId) {
+        stateMachineService.ensureExecutable(action);
         SkillDefinition skill = skillCatalog.getOrUnknown(action.actionType());
         TaskAction next = genericSkillExecutor.execute(planId, userId, skill, action);
         executionLogRepository.logStateChange(planId, action, next, operatorUserId);
