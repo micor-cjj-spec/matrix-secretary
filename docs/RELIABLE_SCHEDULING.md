@@ -35,10 +35,10 @@ lastError
 
 ### 2. Due-action query
 
-`TaskPlanRepository.findDueScheduledActions()` selects only due scheduled actions:
+`TaskPlanRepository.findDueScheduledActions()` selects due runnable actions:
 
 ```sql
-status = 'SCHEDULED'
+status IN ('SCHEDULED', 'RETRY_WAITING')
 AND next_fire_time <= now
 AND (locked_by IS NULL OR locked_at IS NULL OR locked_at < lockExpiredBefore)
 ORDER BY next_fire_time ASC
@@ -49,7 +49,7 @@ The current batch size is 100.
 
 ### 3. Conditional action lock
 
-`TaskPlanRepository.tryLockScheduledAction()` uses a conditional update so that only one worker can acquire the same due action.
+`TaskPlanRepository.tryLockScheduledAction()` uses a conditional update so that only one worker can acquire the same due action. It now supports both `SCHEDULED` and `RETRY_WAITING` actions.
 
 `TaskPlanRepository.releaseActionLock()` releases a lock only for the same owner.
 
@@ -114,7 +114,7 @@ The state machine understands these statuses:
 
 - `RUNNING` blocks cancellation and execution.
 - `FAILED` and `TIMEOUT` actions can be retried.
-- `RETRY_WAITING` can be executed by a future retry scheduler.
+- `RETRY_WAITING` can be dispatched when its `nextFireTime` is due.
 - Plan status resolution now prioritizes `RUNNING`, then `RETRY_WAITING`, then scheduled/failed/timeout terminal states.
 
 `TaskPlanRepository` also updates execution metadata during action persistence:
@@ -137,13 +137,39 @@ updateActionStatus(actionId, status, executionNote, schedule, releaseLock)
 
 This reduces the need to rely only on aggregate `save(plan)` for execution state changes.
 
+### 9. Retry backoff scheduling
+
+When an execution result is `FAILED` or `TIMEOUT`, `TaskPlanRepository.markActionResult()` now checks `attemptCount` against `maxRetryCount`.
+
+If more retries are available, the persisted action becomes `RETRY_WAITING` instead of final `FAILED` or `TIMEOUT`:
+
+```text
+FAILED/TIMEOUT
+  -> attemptCount + 1
+  -> if attemptCount < maxRetryCount
+  -> RETRY_WAITING
+  -> nextFireTime = now + exponential backoff
+```
+
+The current backoff is exponential by attempt number and capped at 30 minutes:
+
+```text
+1st retry: 1 minute
+2nd retry: 2 minutes
+3rd retry: 4 minutes
+...
+max: 30 minutes
+```
+
+`RETRY_WAITING` actions are picked up by the same due-action query and lock path as normal scheduled actions.
+
 ## Still pending
 
-1. Connect `attemptCount` to `maxRetryCount` and retry backoff.
-2. Add a retry scheduler for `RETRY_WAITING` actions.
-3. Add automated tests for lock acquisition, lock expiry, recurring task advancement, same-plan concurrent actions, action-level status updates, and state rules.
-4. Add a composite index for `status + next_fire_time + locked_at`.
-5. Split plan persistence further into clearer `savePlan`, `saveAction`, and query/update ports.
+1. Add automated tests for lock acquisition, lock expiry, recurring task advancement, same-plan concurrent actions, action-level status updates, state rules, and retry backoff.
+2. Add a composite index for `status + next_fire_time + locked_at`.
+3. Split plan persistence further into clearer `savePlan`, `saveAction`, and query/update ports.
+4. Add timeout detection for actions stuck in `RUNNING` beyond a configured threshold.
+5. Add UI/API fields that expose `attemptCount`, `maxRetryCount`, `lastError`, and `nextFireTime` to the frontend.
 
 ## Acceptance checks
 
@@ -157,3 +183,5 @@ This reduces the need to rely only on aggregate `save(plan)` for execution state
 8. `FAILED` and `TIMEOUT` actions populate `lastError`.
 9. Successful, failed, timed-out, and advanced recurring executions increment `attemptCount`.
 10. Immediate execution, manual retry, and scheduled dispatch all persist `RUNNING` before the final action result.
+11. Failed actions with retries remaining move to `RETRY_WAITING` with a future `nextFireTime`.
+12. Due `RETRY_WAITING` actions are scanned, locked, and executed by the same scheduler path.
