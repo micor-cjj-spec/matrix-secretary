@@ -107,7 +107,9 @@ public class AiTaskController {
     }
 
     @GetMapping("/dispatch-records")
-    public PageResult<TaskDispatchRecordResponse> globalDispatchRecords(@RequestParam(required = false) String status,
+    public PageResult<TaskDispatchRecordResponse> globalDispatchRecords(@RequestParam(required = false) String planId,
+                                                                        @RequestParam(required = false) String actionId,
+                                                                        @RequestParam(required = false) String status,
                                                                         @RequestParam(required = false)
                                                                         @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
                                                                         OffsetDateTime startTime,
@@ -116,14 +118,18 @@ public class AiTaskController {
                                                                         OffsetDateTime endTime,
                                                                         @RequestParam(required = false) String dispatchOwner,
                                                                         @RequestParam(required = false) Boolean retryExhausted,
+                                                                        @RequestParam(required = false) Boolean retryDue,
                                                                         @RequestParam(required = false) Long page,
                                                                         @RequestParam(required = false) Long size) {
         return toDispatchRecordResponsePage(dispatchRecordRepository.findAll(
+                planId,
+                actionId,
                 status,
                 startTime,
                 endTime,
                 dispatchOwner,
                 retryExhausted,
+                retryDue,
                 page,
                 size
         ));
