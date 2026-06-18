@@ -47,6 +47,7 @@ public class TaskDispatchRecordRepository {
     public PageResult<TaskDispatchRecordEntity> findAll(String planId,
                                                         String actionId,
                                                         String status,
+                                                        String timeField,
                                                         OffsetDateTime startTime,
                                                         OffsetDateTime endTime,
                                                         String dispatchOwner,
@@ -56,7 +57,7 @@ public class TaskDispatchRecordRepository {
                                                         Long size) {
         LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper = new LambdaQueryWrapper<>();
         applyIdentityFilters(wrapper, planId, actionId);
-        applyQueryFilters(wrapper, status, startTime, endTime, dispatchOwner, retryExhausted, retryDue);
+        applyQueryFilters(wrapper, status, timeField, startTime, endTime, dispatchOwner, retryExhausted, retryDue);
         applyDefaultOrder(wrapper);
         return toPageResult(mapper.selectPage(
                 new Page<>(PageResult.normalizePage(page), PageResult.normalizeSize(size)),
@@ -209,11 +210,12 @@ public class TaskDispatchRecordRepository {
                                    OffsetDateTime startTime,
                                    OffsetDateTime endTime,
                                    String dispatchOwner) {
-        applyQueryFilters(wrapper, status, startTime, endTime, dispatchOwner, null, null);
+        applyQueryFilters(wrapper, status, null, startTime, endTime, dispatchOwner, null, null);
     }
 
     private void applyQueryFilters(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
                                    String status,
+                                   String timeField,
                                    OffsetDateTime startTime,
                                    OffsetDateTime endTime,
                                    String dispatchOwner,
@@ -222,17 +224,43 @@ public class TaskDispatchRecordRepository {
         if (status != null && !status.isBlank()) {
             wrapper.eq(TaskDispatchRecordEntity::getStatus, status.trim().toUpperCase());
         }
+        applyTimeRangeFilter(wrapper, timeField, startTime, endTime);
+        if (dispatchOwner != null && !dispatchOwner.isBlank()) {
+            wrapper.eq(TaskDispatchRecordEntity::getDispatchOwner, dispatchOwner.trim());
+        }
+        applyRetryExhaustedFilter(wrapper, retryExhausted);
+        applyRetryDueFilter(wrapper, retryDue);
+    }
+
+    private void applyTimeRangeFilter(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
+                                      String timeField,
+                                      OffsetDateTime startTime,
+                                      OffsetDateTime endTime) {
+        String normalizedTimeField = timeField == null ? "" : timeField.trim().toLowerCase();
+        if ("startedat".equals(normalizedTimeField)) {
+            if (startTime != null) {
+                wrapper.ge(TaskDispatchRecordEntity::getStartedAt, startTime);
+            }
+            if (endTime != null) {
+                wrapper.le(TaskDispatchRecordEntity::getStartedAt, endTime);
+            }
+            return;
+        }
+        if ("finishedat".equals(normalizedTimeField)) {
+            if (startTime != null) {
+                wrapper.ge(TaskDispatchRecordEntity::getFinishedAt, startTime);
+            }
+            if (endTime != null) {
+                wrapper.le(TaskDispatchRecordEntity::getFinishedAt, endTime);
+            }
+            return;
+        }
         if (startTime != null) {
             wrapper.ge(TaskDispatchRecordEntity::getTriggerAt, startTime);
         }
         if (endTime != null) {
             wrapper.le(TaskDispatchRecordEntity::getTriggerAt, endTime);
         }
-        if (dispatchOwner != null && !dispatchOwner.isBlank()) {
-            wrapper.eq(TaskDispatchRecordEntity::getDispatchOwner, dispatchOwner.trim());
-        }
-        applyRetryExhaustedFilter(wrapper, retryExhausted);
-        applyRetryDueFilter(wrapper, retryDue);
     }
 
     private void applyRetryExhaustedFilter(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,

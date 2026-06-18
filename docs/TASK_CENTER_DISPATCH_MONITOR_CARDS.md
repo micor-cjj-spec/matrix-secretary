@@ -58,6 +58,7 @@ export interface TaskDispatchMetricsSummary {
 ```http
 GET /api/ai-task/dispatch-records?status=FAILED&page=1&size=20
 GET /api/ai-task/dispatch-records?status=RUNNING&page=1&size=20
+GET /api/ai-task/dispatch-records?status=FAILED&timeField=finishedAt&startTime=2026-06-18T00:00:00%2B08:00&page=1&size=20
 GET /api/ai-task/dispatch-records?retryExhausted=true&page=1&size=20
 GET /api/ai-task/dispatch-records?retryDue=true&page=1&size=20
 GET /api/ai-task/dispatch-records?planId={planId}&actionId={actionId}&page=1&size=20
@@ -150,10 +151,15 @@ export interface TaskDispatchMetricsSummary {
   generatedAt: string
 }
 
+export type DispatchRecordTimeField = 'triggerAt' | 'startedAt' | 'finishedAt'
+
 export interface DispatchRecordQuery {
   planId?: string
   actionId?: string
   status?: 'RUNNING' | 'SUCCEEDED' | 'FAILED'
+  timeField?: DispatchRecordTimeField
+  startTime?: string
+  endTime?: string
   retryExhausted?: boolean
   retryDue?: boolean
   page?: number
@@ -256,7 +262,9 @@ export function useDispatchMetricsSummary(refreshIntervalMs = 15000) {
 | 用户点击 | 跳转建议 |
 |---|---|
 | RUNNING 当前值 | `/api/ai-task/dispatch-records?status=RUNNING&page=1&size=20` |
+| 最近开始执行的 RUNNING | `/api/ai-task/dispatch-records?status=RUNNING&timeField=startedAt&startTime=...&page=1&size=20` |
 | FAILED 当前值 | `/api/ai-task/dispatch-records?status=FAILED&page=1&size=20` |
+| 最近完成的 FAILED | `/api/ai-task/dispatch-records?status=FAILED&timeField=finishedAt&startTime=...&page=1&size=20` |
 | 等待重试 | `/api/ai-task/dispatch-records?retryExhausted=false&page=1&size=20` |
 | 已到期重试 | `/api/ai-task/dispatch-records?retryDue=true&page=1&size=20` |
 | 未到期重试 | `/api/ai-task/dispatch-records?retryDue=false&page=1&size=20` |

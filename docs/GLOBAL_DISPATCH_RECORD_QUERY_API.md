@@ -15,13 +15,24 @@ GET /api/ai-task/dispatch-records
 | `planId` | string | 可选，按任务计划 ID 过滤 |
 | `actionId` | string | 可选，按任务动作 ID 过滤 |
 | `status` | string | 调度状态，例如 `RUNNING`、`FAILED`、`SUCCEEDED` |
-| `startTime` | OffsetDateTime | 按 `triggerAt >= startTime` 过滤 |
-| `endTime` | OffsetDateTime | 按 `triggerAt <= endTime` 过滤 |
+| `timeField` | string | 时间过滤字段：`triggerAt`、`startedAt`、`finishedAt`；默认 `triggerAt` |
+| `startTime` | OffsetDateTime | 按 `timeField >= startTime` 过滤 |
+| `endTime` | OffsetDateTime | 按 `timeField <= endTime` 过滤 |
 | `dispatchOwner` | string | 调度持有者，例如 `local-scheduler` |
 | `retryExhausted` | boolean | `true` 查询重试耗尽记录；`false` 查询仍可重试记录 |
 | `retryDue` | boolean | `true` 查询已到重试时间记录；`false` 查询未到重试时间记录 |
 | `page` | long | 页码，默认走 `PageResult` 标准归一化 |
 | `size` | long | 每页数量，默认走 `PageResult` 标准归一化 |
+
+## 时间字段说明
+
+| `timeField` | 过滤字段 | 适用场景 |
+|---|---|---|
+| `triggerAt` | `trigger_at` | 默认值，按任务原始触发时间查询 |
+| `startedAt` | `started_at` | 查询最近开始执行、长时间 RUNNING 的记录 |
+| `finishedAt` | `finished_at` | 查询最近完成、最近失败或最近成功的记录 |
+
+非法或空 `timeField` 会回退为 `triggerAt`。
 
 ## 返回结构
 
@@ -53,6 +64,24 @@ GET /api/ai-task/dispatch-records?planId=plan-123&page=1&size=20
 
 ```http
 GET /api/ai-task/dispatch-records?planId=plan-123&actionId=plan-123-act-1&status=FAILED&page=1&size=20
+```
+
+### 按触发时间查询失败记录
+
+```http
+GET /api/ai-task/dispatch-records?status=FAILED&timeField=triggerAt&startTime=2026-06-18T00:00:00%2B08:00&endTime=2026-06-19T00:00:00%2B08:00&page=1&size=20
+```
+
+### 按开始执行时间查询 RUNNING 记录
+
+```http
+GET /api/ai-task/dispatch-records?status=RUNNING&timeField=startedAt&startTime=2026-06-18T00:00:00%2B08:00&page=1&size=20
+```
+
+### 按完成时间查询最近失败记录
+
+```http
+GET /api/ai-task/dispatch-records?status=FAILED&timeField=finishedAt&startTime=2026-06-18T00:00:00%2B08:00&page=1&size=20
 ```
 
 ### 查询重试耗尽记录
@@ -118,18 +147,14 @@ AND next_retry_at > NOW
 GET /api/ai-task/dispatch-records?status=FAILED&dispatchOwner=local-scheduler&page=1&size=20
 ```
 
-### 查询时间范围内的失败记录
-
-```http
-GET /api/ai-task/dispatch-records?status=FAILED&startTime=2026-06-18T00:00:00%2B08:00&endTime=2026-06-19T00:00:00%2B08:00&page=1&size=20
-```
-
 ## 前端任务中心用法
 
 | 场景 | 请求 |
 |---|---|
 | 点击 FAILED 卡片 | `/api/ai-task/dispatch-records?status=FAILED&page=1&size=20` |
 | 点击 RUNNING 卡片 | `/api/ai-task/dispatch-records?status=RUNNING&page=1&size=20` |
+| 查询最近开始执行的 RUNNING | `/api/ai-task/dispatch-records?status=RUNNING&timeField=startedAt&startTime=...&page=1&size=20` |
+| 查询最近完成的 FAILED | `/api/ai-task/dispatch-records?status=FAILED&timeField=finishedAt&startTime=...&page=1&size=20` |
 | 点击重试耗尽卡片 | `/api/ai-task/dispatch-records?retryExhausted=true&page=1&size=20` |
 | 点击等待重试卡片 | `/api/ai-task/dispatch-records?retryExhausted=false&page=1&size=20` |
 | 点击已到期重试卡片 | `/api/ai-task/dispatch-records?retryDue=true&page=1&size=20` |
@@ -178,13 +203,14 @@ GET /api/ai-task/{planId}/actions/{actionId}/dispatch-records
 2. `retryExhausted=true/false` 会隐含 `status=FAILED` 条件。
 3. `retryDue=true/false` 会隐含 `status=FAILED`、`nextRetryAt IS NOT NULL`、`retryCount < maxRetryCount` 条件。
 4. 如果同时传入互相矛盾的条件，例如 `status=RUNNING&retryDue=true` 或 `retryExhausted=true&retryDue=true`，会返回空结果。
-5. `startTime/endTime` 当前过滤的是 `triggerAt`，不是 `startedAt` 或 `finishedAt`。
+5. `timeField` 仅影响 `startTime/endTime`，不影响默认排序；默认仍按 `triggerAt DESC, createdAt DESC` 排序。
+6. `timeField=finishedAt` 不会自动排除 `finishedAt IS NULL` 的记录；使用 `startTime/endTime` 时 SQL 条件会自然过滤掉空值。
 
 ## 下一步
 
 继续生产化建议：
 
 1. 给全局 dispatch records 查询接口加管理权限。
-2. 增加按 `startedAt/finishedAt` 的时间过滤类型。
+2. 增加排序字段 `sortField`，支持按 `startedAt/finishedAt` 排序。
 3. 前端实现失败调度记录列表页和重试耗尽列表页。
 4. 逐步迁移旧的 plan/action dispatch records 接口到统一查询接口。
