@@ -22,6 +22,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.IntStream;
 
@@ -285,28 +286,36 @@ public class AiTaskService {
 
     private void recoverTimedOutRunningActions(OffsetDateTime now, OffsetDateTime runningExpiredBefore) {
         repository.findTimedOutRunningActions(runningExpiredBefore, DISPATCH_BATCH_SIZE)
-                .forEach(runningAction -> recoverTimedOutAction(runningAction, now));
+                .forEach(runningAction -> recoverTimedOutAction(runningAction, now, runningExpiredBefore));
     }
 
-    private void recoverTimedOutAction(TaskActionEntity runningAction, OffsetDateTime now) {
+    private void recoverTimedOutAction(TaskActionEntity runningAction,
+                                       OffsetDateTime now,
+                                       OffsetDateTime runningExpiredBefore) {
         TaskPlan plan = repository.findById(runningAction.getPlanId()).orElse(null);
         if (plan == null) {
             return;
         }
         List<TaskAction> nextActions = plan.tasks().stream()
-                .map(action -> {
-                    if (!action.actionId().equals(runningAction.getActionId())) {
-                        return action;
-                    }
-                    TaskAction recovered = repository.markActionTimeout(action, now);
-                    executionLogRepository.logStateChange(plan.planId(), action, recovered, SYSTEM_OPERATOR);
-                    return recovered;
-                })
+                .map(action -> recoverTimedOutActionIfMatched(plan, runningAction, action, now, runningExpiredBefore))
                 .toList();
         if (!nextActions.equals(plan.tasks())) {
             TaskPlan saved = repository.save(plan.withStatus(stateMachine.resolvePlanStatus(nextActions), nextActions));
             sessionRepository.updateAfterPlanChange(saved);
         }
+    }
+
+    private TaskAction recoverTimedOutActionIfMatched(TaskPlan plan,
+                                                      TaskActionEntity runningAction,
+                                                      TaskAction action,
+                                                      OffsetDateTime now,
+                                                      OffsetDateTime runningExpiredBefore) {
+        if (!action.actionId().equals(runningAction.getActionId())) {
+            return action;
+        }
+        Optional<TaskAction> recovered = repository.markActionTimeoutIfStillRunning(action, now, runningExpiredBefore);
+        recovered.ifPresent(next -> executionLogRepository.logStateChange(plan.planId(), action, next, SYSTEM_OPERATOR));
+        return recovered.orElse(action);
     }
 
     private void dispatchLockedAction(TaskActionEntity dueAction,
