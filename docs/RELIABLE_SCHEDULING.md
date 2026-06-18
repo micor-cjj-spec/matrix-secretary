@@ -100,11 +100,36 @@ resolvePlanStatus
 
 `AiTaskService` now routes edit, confirm, cancel, retry, dispatch, and plan-status resolution through the state machine. `TaskExecutionService` validates confirmation and execution through the same service.
 
+### 7. Retry and timeout status groundwork
+
+`TaskStatus` now includes:
+
+```text
+RUNNING
+RETRY_WAITING
+TIMEOUT
+```
+
+The state machine understands these statuses:
+
+- `RUNNING` blocks cancellation and execution.
+- `FAILED` and `TIMEOUT` actions can be retried.
+- `RETRY_WAITING` can be executed by a future retry scheduler.
+- Plan status resolution now prioritizes `RUNNING`, then `RETRY_WAITING`, then scheduled/failed/timeout terminal states.
+
+`TaskPlanRepository` also updates execution metadata during action persistence:
+
+- `attemptCount` increments when an action reaches `EXECUTED`, `FAILED`, or `TIMEOUT` from another status.
+- `attemptCount` increments for recurring scheduled actions when `nextFireTime` advances.
+- `lastError` is populated for `FAILED` and `TIMEOUT` actions.
+
+This is groundwork; retry backoff scheduling is not implemented yet.
+
 ## Still pending
 
-1. Add explicit `RUNNING`, `RETRY_WAITING`, and `TIMEOUT` statuses.
-2. Increment `attemptCount` and connect it to `maxRetryCount` plus backoff.
-3. Add automated tests for lock acquisition, lock expiry, recurring task advancement, and same-plan concurrent actions.
+1. Persist a visible `RUNNING` transition before executing long-running skills.
+2. Connect `attemptCount` to `maxRetryCount` and retry backoff.
+3. Add automated tests for lock acquisition, lock expiry, recurring task advancement, same-plan concurrent actions, and status rules.
 4. Add a composite index for `status + next_fire_time + locked_at`.
 5. Split action persistence further into clearer `savePlan`, `saveAction`, and `updateActionStatus` methods.
 
@@ -116,4 +141,6 @@ resolvePlanStatus
 4. A recurring action advances `nextFireTime` after a successful run.
 5. An expired lock can be acquired again after 10 minutes.
 6. Two due actions under the same plan do not clear each other's locks.
-7. Non-confirmable actions cannot be confirmed, and non-failed actions cannot be retried.
+7. Non-confirmable actions cannot be confirmed, and non-failed/non-timeout actions cannot be retried.
+8. `FAILED` and `TIMEOUT` actions populate `lastError`.
+9. Successful, failed, timed-out, and advanced recurring executions increment `attemptCount`.
