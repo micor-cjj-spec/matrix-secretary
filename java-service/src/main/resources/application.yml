@@ -58,6 +58,7 @@ auto-table:
 ai-secretary:
   python-semantic-url: ${PYTHON_SEMANTIC_URL:http://127.0.0.1:10001/api/v1/semantic/parse}
   api-key: ${AI_SECRETARY_API_KEY:}
+  admin-api-key: ${AI_SECRETARY_ADMIN_API_KEY:}
   email:
     send-enabled: ${EMAIL_SEND_ENABLED:false}
     test-recipient: ${EMAIL_TEST_RECIPIENT:}
