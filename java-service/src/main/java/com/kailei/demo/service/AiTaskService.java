@@ -17,6 +17,8 @@ import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.repository.TaskPlanRepository;
 import com.kailei.demo.skill.SkillCatalog;
 import com.kailei.demo.skill.SkillDefinition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
@@ -29,8 +31,10 @@ import java.util.stream.IntStream;
 @Service
 public class AiTaskService {
 
+    private static final Logger log = LoggerFactory.getLogger(AiTaskService.class);
     private static final String SYSTEM_OPERATOR = "system-scheduler";
     private static final int DISPATCH_BATCH_SIZE = 100;
+    private static final int DISPATCH_LOCK_TIMEOUT_MINUTES = 5;
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
@@ -282,17 +286,55 @@ public class AiTaskService {
     }
 
     private void dispatchDueAction(TaskActionEntity dueAction, OffsetDateTime now) {
-        repository.findById(dueAction.getPlanId()).ifPresent(plan -> {
-            List<TaskAction> nextActions = plan.tasks().stream()
-                    .map(action -> action.actionId().equals(dueAction.getActionId())
-                            ? dispatchIfDue(plan, action, now)
-                            : action)
-                    .toList();
-            if (!nextActions.equals(plan.tasks())) {
-                TaskPlan saved = repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
-                sessionRepository.updateAfterPlanChange(saved);
+        String lockOwner = SYSTEM_OPERATOR + "-" + UUID.randomUUID().toString().substring(0, 8);
+        OffsetDateTime lockExpireAt = now.plusMinutes(DISPATCH_LOCK_TIMEOUT_MINUTES);
+        boolean locked = repository.tryLockDueScheduledAction(
+                dueAction.getActionId(),
+                dueAction.getNextRunAt(),
+                now,
+                lockOwner,
+                lockExpireAt
+        );
+        if (!locked) {
+            return;
+        }
+
+        try {
+            TaskPlan plan = repository.findById(dueAction.getPlanId()).orElse(null);
+            if (plan == null) {
+                repository.releaseActionLock(dueAction.getActionId(), lockOwner);
+                return;
             }
-        });
+
+            TaskAction[] dispatchedAction = new TaskAction[1];
+            List<TaskAction> nextActions = plan.tasks().stream()
+                    .map(action -> {
+                        if (!action.actionId().equals(dueAction.getActionId())) {
+                            return action;
+                        }
+                        TaskAction next = dispatchIfDue(plan, action, now);
+                        dispatchedAction[0] = next;
+                        return next;
+                    })
+                    .toList();
+
+            if (dispatchedAction[0] == null || nextActions.equals(plan.tasks())) {
+                repository.releaseActionLock(dueAction.getActionId(), lockOwner);
+                return;
+            }
+
+            TaskPlan saved = repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
+            sessionRepository.updateAfterPlanChange(saved);
+
+            if (dispatchedAction[0].status() == TaskStatus.FAILED) {
+                repository.recordActionFailure(dueAction.getActionId(), lockOwner, dispatchedAction[0].executionNote());
+            } else {
+                repository.releaseActionLock(dueAction.getActionId(), lockOwner);
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Dispatch due action failed, actionId={}, planId={}", dueAction.getActionId(), dueAction.getPlanId(), ex);
+            repository.recordActionFailure(dueAction.getActionId(), lockOwner, ex.getMessage());
+        }
     }
 
     private void ensureSameUser(TaskPlan plan, String userId) {
