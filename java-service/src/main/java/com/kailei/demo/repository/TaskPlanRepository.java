@@ -1,6 +1,7 @@
 package com.kailei.demo.repository;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,6 +17,8 @@ import com.kailei.demo.model.TaskTarget;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +26,8 @@ import java.util.Optional;
 
 @Repository
 public class TaskPlanRepository {
+
+    private static final int DEFAULT_MAX_RETRY_COUNT = 3;
 
     private final TaskPlanMapper taskPlanMapper;
     private final TaskActionMapper taskActionMapper;
@@ -88,6 +93,49 @@ public class TaskPlanRepository {
                 .toList();
     }
 
+    public List<TaskActionEntity> findDueScheduledActions(OffsetDateTime now,
+                                                          OffsetDateTime lockExpiredBefore,
+                                                          int limit) {
+        return taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                .le(TaskActionEntity::getNextFireTime, now)
+                .and(wrapper -> wrapper
+                        .isNull(TaskActionEntity::getLockedBy)
+                        .or()
+                        .isNull(TaskActionEntity::getLockedAt)
+                        .or()
+                        .lt(TaskActionEntity::getLockedAt, lockExpiredBefore))
+                .orderByAsc(TaskActionEntity::getNextFireTime)
+                .last("LIMIT " + sanitizeLimit(limit)));
+    }
+
+    public boolean tryLockScheduledAction(String actionId,
+                                          OffsetDateTime now,
+                                          OffsetDateTime lockExpiredBefore,
+                                          String lockOwner) {
+        int updated = taskActionMapper.update(null, new LambdaUpdateWrapper<TaskActionEntity>()
+                .set(TaskActionEntity::getLockedBy, lockOwner)
+                .set(TaskActionEntity::getLockedAt, now)
+                .eq(TaskActionEntity::getActionId, actionId)
+                .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                .le(TaskActionEntity::getNextFireTime, now)
+                .and(wrapper -> wrapper
+                        .isNull(TaskActionEntity::getLockedBy)
+                        .or()
+                        .isNull(TaskActionEntity::getLockedAt)
+                        .or()
+                        .lt(TaskActionEntity::getLockedAt, lockExpiredBefore)));
+        return updated > 0;
+    }
+
+    public void releaseActionLock(String actionId, String lockOwner) {
+        taskActionMapper.update(null, new LambdaUpdateWrapper<TaskActionEntity>()
+                .set(TaskActionEntity::getLockedBy, null)
+                .set(TaskActionEntity::getLockedAt, null)
+                .eq(TaskActionEntity::getActionId, actionId)
+                .eq(TaskActionEntity::getLockedBy, lockOwner));
+    }
+
     private List<TaskActionEntity> findActions(String planId) {
         return taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
                 .eq(TaskActionEntity::getPlanId, planId)
@@ -128,6 +176,11 @@ public class TaskPlanRepository {
         entity.setStatus(action.status().name());
         entity.setExecutionNote(limit(action.executionNote(), 512));
         entity.setSortOrder(sortOrder);
+        entity.setNextFireTime(resolveNextFireTime(action.status(), action.schedule()));
+        entity.setAttemptCount(0);
+        entity.setMaxRetryCount(DEFAULT_MAX_RETRY_COUNT);
+        entity.setIdempotencyKey(action.actionId());
+        entity.setLastError(action.status() == TaskStatus.FAILED ? limit(action.executionNote(), 1024) : null);
         return entity;
     }
 
@@ -211,6 +264,28 @@ public class TaskPlanRepository {
         } catch (JsonProcessingException ex) {
             return fallback;
         }
+    }
+
+    private OffsetDateTime resolveNextFireTime(TaskStatus status, TaskSchedule schedule) {
+        if (status != TaskStatus.SCHEDULED) {
+            return null;
+        }
+        if (schedule == null || !schedule.isScheduled()) {
+            return OffsetDateTime.now();
+        }
+        String effectiveRunAt = schedule.effectiveRunAt();
+        if (effectiveRunAt == null || effectiveRunAt.isBlank()) {
+            return OffsetDateTime.now();
+        }
+        try {
+            return OffsetDateTime.parse(effectiveRunAt);
+        } catch (DateTimeParseException ex) {
+            return OffsetDateTime.now();
+        }
+    }
+
+    private int sanitizeLimit(int limit) {
+        return Math.max(1, Math.min(limit, 500));
     }
 
     private String limit(String value, int maxLength) {
