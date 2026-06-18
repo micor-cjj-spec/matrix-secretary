@@ -8,6 +8,7 @@ import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
+import com.kailei.demo.model.TaskPlanPageResponse;
 import com.kailei.demo.model.TaskSchedule;
 import com.kailei.demo.model.TaskStatus;
 import com.kailei.demo.repository.AiSessionRepository;
@@ -248,6 +249,10 @@ public class AiTaskService {
             return repository.findAll();
         }
         return repository.findByUserId(userId);
+    }
+
+    public TaskPlanPageResponse page(String userId, String status, String sessionId, Integer pageNo, Integer pageSize) {
+        return repository.findPage(userId, status, sessionId, pageNo, pageSize);
     }
 
     public List<TaskPlan> list() {
