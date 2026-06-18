@@ -48,7 +48,8 @@ public class TaskStateMachineService {
         if (plan == null || plan.status() == TaskStatus.CANCELLED) {
             return false;
         }
-        return plan.tasks().stream().noneMatch(action -> action.status() == TaskStatus.EXECUTED);
+        return plan.tasks().stream().noneMatch(action -> action.status() == TaskStatus.EXECUTED
+                || action.status() == TaskStatus.RUNNING);
     }
 
     public void requireCancellablePlan(TaskPlan plan) {
@@ -61,7 +62,7 @@ public class TaskStateMachineService {
     }
 
     public boolean canRetryAction(TaskAction action) {
-        return action != null && action.status() == TaskStatus.FAILED;
+        return action != null && (action.status() == TaskStatus.FAILED || action.status() == TaskStatus.TIMEOUT);
     }
 
     public void requireRetryableAction(TaskAction action) {
@@ -81,7 +82,9 @@ public class TaskStateMachineService {
         return action.status() == TaskStatus.WAITING_CONFIRM
                 || action.status() == TaskStatus.CONFIRMED
                 || action.status() == TaskStatus.SCHEDULED
-                || action.status() == TaskStatus.FAILED;
+                || action.status() == TaskStatus.FAILED
+                || action.status() == TaskStatus.TIMEOUT
+                || action.status() == TaskStatus.RETRY_WAITING;
     }
 
     public void requireExecutableAction(TaskAction action) {
@@ -97,8 +100,17 @@ public class TaskStateMachineService {
         if (actions.stream().allMatch(action -> action.status() == TaskStatus.CANCELLED)) {
             return TaskStatus.CANCELLED;
         }
+        if (actions.stream().anyMatch(action -> action.status() == TaskStatus.RUNNING)) {
+            return TaskStatus.RUNNING;
+        }
+        if (actions.stream().anyMatch(action -> action.status() == TaskStatus.RETRY_WAITING)) {
+            return TaskStatus.RETRY_WAITING;
+        }
         if (actions.stream().anyMatch(action -> action.status() == TaskStatus.SCHEDULED)) {
             return TaskStatus.SCHEDULED;
+        }
+        if (actions.stream().anyMatch(action -> action.status() == TaskStatus.TIMEOUT)) {
+            return TaskStatus.TIMEOUT;
         }
         if (actions.stream().anyMatch(action -> action.status() == TaskStatus.FAILED)) {
             return TaskStatus.FAILED;
