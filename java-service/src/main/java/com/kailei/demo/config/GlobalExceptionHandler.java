@@ -2,6 +2,8 @@ package com.kailei.demo.config;
 
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
+import com.kailei.demo.exception.ApiErrorCode;
+import com.kailei.demo.exception.BusinessException;
 import com.kailei.demo.model.ApiErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
@@ -30,10 +32,16 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    @ExceptionHandler(BusinessException.class)
+    public ResponseEntity<ApiErrorResponse> handleBusiness(BusinessException ex,
+                                                           HttpServletRequest request) {
+        return error(ex.code(), ex.getMessage(), request, ex.details());
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiErrorResponse> handleIllegalArgument(IllegalArgumentException ex,
                                                                   HttpServletRequest request) {
-        return error(HttpStatus.BAD_REQUEST, "BAD_REQUEST", ex.getMessage(), request, null);
+        return error(ApiErrorCode.BAD_REQUEST, ex.getMessage(), request, null);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -43,13 +51,13 @@ public class GlobalExceptionHandler {
         for (FieldError fieldError : ex.getBindingResult().getFieldErrors()) {
             details.put(fieldError.getField(), fieldError.getDefaultMessage());
         }
-        return error(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "请求参数校验失败", request, details);
+        return error(ApiErrorCode.VALIDATION_FAILED, "请求参数校验失败", request, details);
     }
 
     @ExceptionHandler(HandlerMethodValidationException.class)
     public ResponseEntity<ApiErrorResponse> handleHandlerMethodValidation(HandlerMethodValidationException ex,
                                                                           HttpServletRequest request) {
-        return error(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "请求参数校验失败", request, null);
+        return error(ApiErrorCode.VALIDATION_FAILED, "请求参数校验失败", request, null);
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
@@ -59,21 +67,21 @@ public class GlobalExceptionHandler {
         ex.getConstraintViolations().forEach(violation ->
                 details.put(violation.getPropertyPath().toString(), violation.getMessage())
         );
-        return error(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "请求参数校验失败", request, details);
+        return error(ApiErrorCode.VALIDATION_FAILED, "请求参数校验失败", request, details);
     }
 
     @ExceptionHandler(MissingServletRequestParameterException.class)
     public ResponseEntity<ApiErrorResponse> handleMissingServletRequestParameter(MissingServletRequestParameterException ex,
                                                                                  HttpServletRequest request) {
         Map<String, String> details = Map.of(ex.getParameterName(), "缺少必填请求参数");
-        return error(HttpStatus.BAD_REQUEST, "MISSING_PARAMETER", "缺少必填请求参数", request, details);
+        return error(ApiErrorCode.MISSING_PARAMETER, "缺少必填请求参数", request, details);
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiErrorResponse> handleHttpMessageNotReadable(HttpMessageNotReadableException ex,
                                                                          HttpServletRequest request) {
         Map<String, String> details = extractJsonErrorDetails(ex);
-        return error(HttpStatus.BAD_REQUEST, "INVALID_JSON", "请求体 JSON 格式错误或字段类型不匹配", request, details);
+        return error(ApiErrorCode.INVALID_JSON, "请求体 JSON 格式错误或字段类型不匹配", request, details);
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
@@ -84,20 +92,20 @@ public class GlobalExceptionHandler {
         if (ex.getSupportedMethods() != null) {
             details.put("supportedMethods", String.join(",", ex.getSupportedMethods()));
         }
-        return error(HttpStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "请求方法不支持", request, details);
+        return error(ApiErrorCode.METHOD_NOT_ALLOWED, "请求方法不支持", request, details);
     }
 
     @ExceptionHandler(NoHandlerFoundException.class)
     public ResponseEntity<ApiErrorResponse> handleNoHandlerFound(NoHandlerFoundException ex,
                                                                  HttpServletRequest request) {
-        return error(HttpStatus.NOT_FOUND, "NOT_FOUND", "接口不存在", request, null);
+        return error(ApiErrorCode.NOT_FOUND, "接口不存在", request, null);
     }
 
     @ExceptionHandler(RestClientException.class)
     public ResponseEntity<ApiErrorResponse> handleRestClient(RestClientException ex,
                                                              HttpServletRequest request) {
         log.warn("Remote service call failed", ex);
-        return error(HttpStatus.BAD_GATEWAY, "REMOTE_SERVICE_UNAVAILABLE",
+        return error(ApiErrorCode.REMOTE_SERVICE_UNAVAILABLE,
                 "Remote service is unavailable. Please check Python, LLM, or channel provider configuration.",
                 request, Map.of("exception", ex.getClass().getSimpleName()));
     }
@@ -106,7 +114,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleDatabase(DataAccessException ex,
                                                            HttpServletRequest request) {
         log.warn("Database access failed", ex);
-        return error(HttpStatus.SERVICE_UNAVAILABLE, "DATABASE_UNAVAILABLE",
+        return error(ApiErrorCode.DATABASE_UNAVAILABLE,
                 "Database is unavailable. Please check MySQL status and connection configuration.",
                 request, Map.of("exception", ex.getClass().getSimpleName()));
     }
@@ -117,7 +125,7 @@ public class GlobalExceptionHandler {
         String traceId = traceId();
         log.error("Unexpected API error, traceId={}, path={}", traceId, request.getRequestURI(), ex);
         ApiErrorResponse body = ApiErrorResponse.of(
-                "INTERNAL_SERVER_ERROR",
+                ApiErrorCode.INTERNAL_SERVER_ERROR.name(),
                 "服务器内部错误，请稍后重试或联系管理员，traceId=" + traceId,
                 request.getRequestURI(),
                 traceId
@@ -125,23 +133,23 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
 
-    private ResponseEntity<ApiErrorResponse> error(HttpStatus status,
-                                                   String code,
+    private ResponseEntity<ApiErrorResponse> error(ApiErrorCode code,
                                                    String message,
                                                    HttpServletRequest request,
                                                    Map<String, String> details) {
+        HttpStatus status = code.httpStatus();
         String traceId = traceId();
         ApiErrorResponse body = ApiErrorResponse.of(
-                code,
-                message == null || message.isBlank() ? status.getReasonPhrase() : message,
+                code.name(),
+                message == null || message.isBlank() ? code.defaultMessage() : message,
                 request.getRequestURI(),
                 traceId,
                 details == null ? Map.of() : details
         );
         if (status.is5xxServerError()) {
-            log.error("API error, traceId={}, code={}, path={}, details={}", traceId, code, request.getRequestURI(), details);
+            log.error("API error, traceId={}, code={}, path={}, details={}", traceId, code.name(), request.getRequestURI(), details);
         } else {
-            log.warn("API error, traceId={}, code={}, path={}, message={}, details={}", traceId, code, request.getRequestURI(), message, details);
+            log.warn("API error, traceId={}, code={}, path={}, message={}, details={}", traceId, code.name(), request.getRequestURI(), message, details);
         }
         return ResponseEntity.status(status).body(body);
     }
