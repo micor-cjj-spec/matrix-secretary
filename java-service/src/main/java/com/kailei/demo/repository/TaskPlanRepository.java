@@ -163,6 +163,7 @@ public class TaskPlanRepository {
             return;
         }
         taskActionMapper.update(null, new LambdaUpdateWrapper<TaskActionEntity>()
+                .set(TaskActionEntity::getStatus, TaskStatus.FAILED.name())
                 .set(TaskActionEntity::getLockedBy, null)
                 .set(TaskActionEntity::getLockedAt, null)
                 .set(TaskActionEntity::getLockExpireAt, null)
