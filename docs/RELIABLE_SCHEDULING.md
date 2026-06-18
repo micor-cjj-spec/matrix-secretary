@@ -1,46 +1,41 @@
-# 调度可靠性改造说明
+# Reliable scheduling changes
 
-本文档记录 `feat/reliable-scheduling-clean` 分支的第一轮调度可靠性改造。
+This document records the first reliability pass on scheduled task dispatch in `feat/reliable-scheduling-clean`.
 
-## 背景
+## Background
 
-原实现中，本地 `@Scheduled` 或 XXL-JOB 每 10 秒触发一次 `dispatchDueOnceTasks()`，内部会读取全部 `TaskPlan`，再逐个判断 action 是否到期。
+The previous local scheduler or XXL-JOB handler triggered `dispatchDueOnceTasks()` every 10 seconds. The old implementation scanned all task plans and then checked each action to decide whether it was due.
 
-这种方式适合 demo，但存在几个问题：
+That was acceptable for a demo, but it had several issues:
 
-- 任务量上来后会全量扫描计划表。
-- 多实例部署时缺少抢占锁，可能重复执行同一个到期任务。
-- 执行过程中服务宕机后缺少锁过期和恢复基础。
-- 调度查询字段隐藏在 `scheduleJson` 内，不利于建立索引。
-- `TaskPlanRepository.save()` 原先会删除整个 plan 下的 action 再重插，可能覆盖其他调度线程已经抢到的 action 锁。
+- It could scan too many plans as data grows.
+- Multiple Java instances could pick the same due action.
+- A crashed worker could leave no clear recovery path.
+- Scheduling query fields lived only inside `scheduleJson`, which is not suitable for indexed due-task queries.
+- The old plan save flow deleted all actions under a plan and inserted them again, which could clear locks held by another scheduler worker.
+- State rules were scattered across service methods, making future statuses harder to add safely.
 
-## 本次改造内容
+## Changes
 
-### 1. action 表增加调度辅助字段
+### 1. Scheduling columns on task actions
 
-`TaskActionEntity` 新增字段：
-
-```text
-nextFireTime     下次触发时间，调度器按该字段查询到期动作
-lockedBy         调度执行锁持有者
-lockedAt         调度执行锁获取时间
-attemptCount     执行尝试次数
-maxRetryCount    最大重试次数
-idempotencyKey   幂等键
-lastError        最近一次错误信息
-```
-
-其中 `status` 和 `nextFireTime` 已加索引注解，后续调度查询应围绕这两个字段优化。
-
-### 2. 不再全量扫描计划
-
-`TaskPlanRepository` 新增：
+`TaskActionEntity` now has these scheduling helper fields:
 
 ```text
-findDueScheduledActions(now, lockExpiredBefore, limit)
+nextFireTime
+lockedBy
+lockedAt
+attemptCount
+maxRetryCount
+idempotencyKey
+lastError
 ```
 
-查询条件：
+`status` and `nextFireTime` have index annotations. A later pass should replace field-level indexes with a composite scheduling index.
+
+### 2. Due-action query
+
+`TaskPlanRepository.findDueScheduledActions()` selects only due scheduled actions:
 
 ```sql
 status = 'SCHEDULED'
@@ -50,74 +45,75 @@ ORDER BY next_fire_time ASC
 LIMIT :limit
 ```
 
-当前批量大小为 100。
+The current batch size is 100.
 
-### 3. 到期动作执行前先抢锁
+### 3. Conditional action lock
 
-`TaskPlanRepository` 新增：
+`TaskPlanRepository.tryLockScheduledAction()` uses a conditional update so that only one worker can acquire the same due action.
 
-```text
-tryLockScheduledAction(actionId, now, lockExpiredBefore, lockOwner)
-releaseActionLock(actionId, lockOwner)
-```
+`TaskPlanRepository.releaseActionLock()` releases a lock only for the same owner.
 
-抢锁通过条件更新实现：只有仍处于 `SCHEDULED`、已经到期、且未被有效锁占用的 action 才能更新成功。
+### 4. Dispatch flow
 
-这可以避免：
-
-- 本地调度与 XXL-JOB 同时触发时重复执行同一 action。
-- 多实例同时扫描到同一 action 时重复执行。
-
-### 4. 调度主流程调整
-
-`AiTaskService.dispatchDueOnceTasks()` 现在流程为：
+`AiTaskService.dispatchDueOnceTasks()` now:
 
 ```text
-计算 now / lockExpiredBefore / lockOwner
-  -> 查询到期 action 批次
-  -> 对每个 action 尝试抢锁
-  -> 抢锁成功后读取所属 plan
-  -> 只执行当前到期 action
-  -> 保存 plan/action 状态
-  -> 如果没有产生状态变化则释放锁
+calculate now / lockExpiredBefore / lockOwner
+  -> query due actions
+  -> try to lock each action
+  -> load the owning plan
+  -> execute only the locked action
+  -> save plan/action state
+  -> release the lock if nothing changed
 ```
 
-锁超时时间当前为 10 分钟。
+The current lock timeout is 10 minutes.
 
-### 5. action 持久化改为增量 upsert
+### 5. Incremental action persistence
 
-`TaskPlanRepository.save()` 已从“删除当前 plan 下所有 action 再重插”改为按 `actionId` 增量 upsert：
+`TaskPlanRepository.save()` no longer deletes all actions and inserts them again. It now performs action-level upsert by `actionId`:
 
 ```text
-保存 TaskPlan 主表
-  -> 读取当前 plan 已有 actions
-  -> 按 actionId 更新已有 action
-  -> 插入新增 action
-  -> 删除本次计划中已经不存在的 action
+save the plan row
+  -> load existing actions under the plan
+  -> update existing actions by actionId
+  -> insert new actions
+  -> delete actions that no longer exist in the plan
 ```
 
-同时，保存已有 action 时会保留未变化 action 的 `lockedBy` / `lockedAt`，避免一个 action 的执行结果覆盖另一个并发调度线程已经获取的锁。
+For unchanged actions, existing lock fields are preserved. If action status or `nextFireTime` changes, the lock is cleared.
 
-当 action 状态或 `nextFireTime` 发生变化时，锁会被清空，表示本次调度处理已经结束或进入下一次调度周期。
+### 6. State machine extraction
 
-## 当前仍未完成
+`TaskStateMachineService` centralizes plan/action state rules:
 
-这次改造是第一步，不代表调度已经完全生产级。后续还需要继续补：
+```text
+canEditPlan / requireEditablePlan
+canEditAction / requireEditableAction
+canConfirmPlan / canConfirmAction / requireConfirmableAction
+canCancelPlan / requireCancellablePlan
+canRetryAction / requireRetryableAction
+canDispatchScheduledAction
+canExecuteAction / requireExecutableAction
+resolvePlanStatus
+```
 
-1. 引入明确的 `RUNNING` / `RETRY_WAITING` / `TIMEOUT` 状态。
-2. `attemptCount` 真正递增，并与 `maxRetryCount`、失败退避策略联动。
-3. 使用独立状态机服务管理调度状态流转。
-4. 为调度抢锁、锁过期、周期任务推进增加自动化测试。
-5. 对 `next_fire_time`、`status`、`locked_at` 建复合索引，而不是只依赖字段级索引。
-6. 将 action 级增量持久化进一步拆成更明确的 `savePlan`、`saveAction`、`updateActionStatus` 等方法，减少聚合保存时的并发影响面。
+`AiTaskService` now routes edit, confirm, cancel, retry, dispatch, and plan-status resolution through the state machine. `TaskExecutionService` validates confirmation and execution through the same service.
 
-## 验收建议
+## Still pending
 
-至少验证以下场景：
+1. Add explicit `RUNNING`, `RETRY_WAITING`, and `TIMEOUT` statuses.
+2. Increment `attemptCount` and connect it to `maxRetryCount` plus backoff.
+3. Add automated tests for lock acquisition, lock expiry, recurring task advancement, and same-plan concurrent actions.
+4. Add a composite index for `status + next_fire_time + locked_at`.
+5. Split action persistence further into clearer `savePlan`, `saveAction`, and `updateActionStatus` methods.
 
-1. 一个到期一次性提醒只执行一次。
-2. 本地 `@Scheduled` 和 XXL-JOB 同时触发时，不会重复执行同一 action。
-3. 两个 Java 实例同时触发调度时，只有一个实例能抢到同一 action。
-4. 周期任务执行成功后重新进入 `SCHEDULED`，并推进下一次 `nextFireTime`。
-5. 被锁住但超过 10 分钟未完成的 action 可以被后续调度重新抢占。
-6. 同一个 plan 下两个 action 同时到期时，一个 action 的保存不会清除另一个 action 已获取的锁。
+## Acceptance checks
+
+1. A due one-time reminder executes once.
+2. Local scheduler and XXL-JOB do not run the same action twice.
+3. Two Java instances cannot acquire the same due action.
+4. A recurring action advances `nextFireTime` after a successful run.
+5. An expired lock can be acquired again after 10 minutes.
+6. Two due actions under the same plan do not clear each other's locks.
+7. Non-confirmable actions cannot be confirmed, and non-failed actions cannot be retried.
