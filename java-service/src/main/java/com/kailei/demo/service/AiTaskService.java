@@ -119,7 +119,7 @@ public class AiTaskService {
                     request == null ? null : request.priority(),
                     request == null ? null : request.requiresConfirmation()
             ).withStatus(TaskStatus.WAITING_CONFIRM, "用户已编辑任务参数，等待确认");
-            executionLogRepository.logStateChange(plan.planId(), action, edited, effectiveOperator);
+            executionLogRepository.logStateChange(plan.planId(), plan.traceId(), action, edited, effectiveOperator);
             nextActions.add(edited);
         }
         if (!matched) {
@@ -174,7 +174,7 @@ public class AiTaskService {
         }
 
         List<TaskAction> nextActions = plan.tasks().stream()
-                .map(action -> executionService.confirmAction(plan.planId(), plan.userId(), action, effectiveOperator))
+                .map(action -> executionService.confirmAction(plan.planId(), plan.traceId(), plan.userId(), action, effectiveOperator))
                 .toList();
 
         TaskPlan nextPlan = plan.withStatus(resolvePlanStatus(nextActions), nextActions);
@@ -199,7 +199,7 @@ public class AiTaskService {
                         return action;
                     }
                     TaskAction next = action.withStatus(TaskStatus.CANCELLED, "任务已取消: " + cancelReason);
-                    executionLogRepository.logStateChange(plan.planId(), action, next, effectiveOperator);
+                    executionLogRepository.logStateChange(plan.planId(), plan.traceId(), action, next, effectiveOperator);
                     return next;
                 })
                 .toList();
@@ -222,7 +222,7 @@ public class AiTaskService {
             }
             matched = true;
             stateMachineService.ensureRetryable(action);
-            nextActions.add(executionService.executeNow(plan.planId(), plan.userId(), action, effectiveOperator));
+            nextActions.add(executionService.executeNow(plan.planId(), plan.traceId(), plan.userId(), action, effectiveOperator));
         }
         if (!matched) {
             throw new IllegalArgumentException("任务动作不存在: " + actionId);
@@ -347,7 +347,7 @@ public class AiTaskService {
                 return action.withSchedule(schedule);
             }
             TaskAction executable = action.withSchedule(schedule);
-            TaskAction executed = executionService.executeNow(plan.planId(), plan.userId(), executable, SYSTEM_OPERATOR);
+            TaskAction executed = executionService.executeNow(plan.planId(), plan.traceId(), plan.userId(), executable, SYSTEM_OPERATOR);
             if (schedule.isRecurring() && executed.status() == TaskStatus.EXECUTED) {
                 TaskSchedule nextSchedule = cronScheduleService.markTriggered(schedule, now);
                 String note = "周期任务已执行，下一次触发: cron=" + nextSchedule.cron()
