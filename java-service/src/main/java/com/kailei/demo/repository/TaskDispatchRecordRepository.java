@@ -44,6 +44,22 @@ public class TaskDispatchRecordRepository {
                 .last("LIMIT 1")));
     }
 
+    public PageResult<TaskDispatchRecordEntity> findAll(String status,
+                                                        OffsetDateTime startTime,
+                                                        OffsetDateTime endTime,
+                                                        String dispatchOwner,
+                                                        Boolean retryExhausted,
+                                                        Long page,
+                                                        Long size) {
+        LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper = new LambdaQueryWrapper<>();
+        applyQueryFilters(wrapper, status, startTime, endTime, dispatchOwner, retryExhausted);
+        applyDefaultOrder(wrapper);
+        return toPageResult(mapper.selectPage(
+                new Page<>(PageResult.normalizePage(page), PageResult.normalizeSize(size)),
+                wrapper
+        ));
+    }
+
     public PageResult<TaskDispatchRecordEntity> findByPlanId(String planId, Long page, Long size) {
         return findByPlanId(planId, null, null, null, null, page, size);
     }
@@ -178,6 +194,15 @@ public class TaskDispatchRecordRepository {
                                    OffsetDateTime startTime,
                                    OffsetDateTime endTime,
                                    String dispatchOwner) {
+        applyQueryFilters(wrapper, status, startTime, endTime, dispatchOwner, null);
+    }
+
+    private void applyQueryFilters(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
+                                   String status,
+                                   OffsetDateTime startTime,
+                                   OffsetDateTime endTime,
+                                   String dispatchOwner,
+                                   Boolean retryExhausted) {
         if (status != null && !status.isBlank()) {
             wrapper.eq(TaskDispatchRecordEntity::getStatus, status.trim().toUpperCase());
         }
@@ -190,6 +215,21 @@ public class TaskDispatchRecordRepository {
         if (dispatchOwner != null && !dispatchOwner.isBlank()) {
             wrapper.eq(TaskDispatchRecordEntity::getDispatchOwner, dispatchOwner.trim());
         }
+        applyRetryExhaustedFilter(wrapper, retryExhausted);
+    }
+
+    private void applyRetryExhaustedFilter(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
+                                           Boolean retryExhausted) {
+        if (retryExhausted == null) {
+            return;
+        }
+        wrapper.eq(TaskDispatchRecordEntity::getStatus, STATUS_FAILED);
+        if (Boolean.TRUE.equals(retryExhausted)) {
+            wrapper.apply("COALESCE(retry_count, 0) >= COALESCE(max_retry_count, 0)");
+            return;
+        }
+        wrapper.isNotNull(TaskDispatchRecordEntity::getNextRetryAt)
+                .apply("COALESCE(retry_count, 0) < COALESCE(max_retry_count, 0)");
     }
 
     private void applyDefaultOrder(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper) {
