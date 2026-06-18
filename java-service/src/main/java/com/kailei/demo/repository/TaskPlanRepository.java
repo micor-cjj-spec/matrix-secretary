@@ -187,6 +187,20 @@ public class TaskPlanRepository {
                 .eq(TaskActionEntity::getLockedBy, lockedBy));
     }
 
+    public void resetActionRuntimeState(String actionId) {
+        if (actionId == null || actionId.isBlank()) {
+            return;
+        }
+        taskActionMapper.update(null, new LambdaUpdateWrapper<TaskActionEntity>()
+                .set(TaskActionEntity::getRetryCount, 0)
+                .set(TaskActionEntity::getLastError, null)
+                .set(TaskActionEntity::getIdempotencyKey, null)
+                .set(TaskActionEntity::getLockedBy, null)
+                .set(TaskActionEntity::getLockedAt, null)
+                .set(TaskActionEntity::getLockExpireAt, null)
+                .eq(TaskActionEntity::getActionId, actionId));
+    }
+
     private void syncActions(TaskPlan plan) {
         Set<String> currentActionIds = new LinkedHashSet<>();
         for (int i = 0; i < plan.tasks().size(); i++) {
