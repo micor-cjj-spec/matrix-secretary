@@ -32,6 +32,7 @@ import java.util.Set;
 public class TaskPlanRepository {
 
     private static final int DEFAULT_MAX_RETRY_COUNT = 3;
+    private static final int MAX_RETRY_BACKOFF_MINUTES = 30;
 
     private final TaskPlanMapper taskPlanMapper;
     private final TaskActionMapper taskActionMapper;
@@ -97,7 +98,7 @@ public class TaskPlanRepository {
                                                           OffsetDateTime lockExpiredBefore,
                                                           int limit) {
         return taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
-                .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                .in(TaskActionEntity::getStatus, List.of(TaskStatus.SCHEDULED.name(), TaskStatus.RETRY_WAITING.name()))
                 .le(TaskActionEntity::getNextFireTime, now)
                 .and(wrapper -> wrapper
                         .isNull(TaskActionEntity::getLockedBy)
@@ -117,7 +118,7 @@ public class TaskPlanRepository {
                 .set(TaskActionEntity::getLockedBy, lockOwner)
                 .set(TaskActionEntity::getLockedAt, now)
                 .eq(TaskActionEntity::getActionId, actionId)
-                .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                .in(TaskActionEntity::getStatus, List.of(TaskStatus.SCHEDULED.name(), TaskStatus.RETRY_WAITING.name()))
                 .le(TaskActionEntity::getNextFireTime, now)
                 .and(wrapper -> wrapper
                         .isNull(TaskActionEntity::getLockedBy)
@@ -140,8 +141,10 @@ public class TaskPlanRepository {
         updateActionStatus(action.actionId(), TaskStatus.RUNNING, note, action.schedule(), false);
     }
 
-    public void markActionResult(TaskAction action) {
-        updateActionStatus(action.actionId(), action.status(), action.executionNote(), action.schedule(), true);
+    public TaskAction markActionResult(TaskAction action) {
+        TaskAction storedAction = resolveRetryState(action);
+        updateActionStatus(storedAction.actionId(), storedAction.status(), storedAction.executionNote(), storedAction.schedule(), true);
+        return storedAction;
     }
 
     public void updateActionStatus(String actionId,
@@ -158,6 +161,7 @@ public class TaskPlanRepository {
         LambdaUpdateWrapper<TaskActionEntity> wrapper = new LambdaUpdateWrapper<TaskActionEntity>()
                 .set(TaskActionEntity::getStatus, status.name())
                 .set(TaskActionEntity::getExecutionNote, limit(executionNote, 512))
+                .set(TaskActionEntity::getScheduleJson, writeJson(schedule))
                 .set(TaskActionEntity::getNextFireTime, nextFireTime)
                 .set(TaskActionEntity::getAttemptCount, attemptCount)
                 .set(TaskActionEntity::getLastError, resolveLastError(status, executionNote))
@@ -167,6 +171,40 @@ public class TaskPlanRepository {
                     .set(TaskActionEntity::getLockedAt, null);
         }
         taskActionMapper.update(null, wrapper);
+    }
+
+    private TaskAction resolveRetryState(TaskAction action) {
+        if (action.status() != TaskStatus.FAILED && action.status() != TaskStatus.TIMEOUT) {
+            return action;
+        }
+        TaskActionEntity existing = taskActionMapper.selectById(action.actionId());
+        if (existing == null) {
+            return action;
+        }
+        int maxRetries = existing.getMaxRetryCount() == null ? DEFAULT_MAX_RETRY_COUNT : existing.getMaxRetryCount();
+        int nextAttemptCount = resolveAttemptCount(existing, action.status(), resolveNextFireTime(action.status(), action.schedule()));
+        if (nextAttemptCount >= maxRetries) {
+            return action;
+        }
+        OffsetDateTime retryAt = OffsetDateTime.now().plusMinutes(retryBackoffMinutes(nextAttemptCount));
+        TaskSchedule retrySchedule = withRetryRunAt(action.schedule(), retryAt);
+        String note = limit(action.executionNote(), 384)
+                + "; retry " + nextAttemptCount + "/" + maxRetries
+                + " scheduled at " + retryAt;
+        return action.withSchedule(retrySchedule).withStatus(TaskStatus.RETRY_WAITING, note);
+    }
+
+    private TaskSchedule withRetryRunAt(TaskSchedule schedule, OffsetDateTime retryAt) {
+        String retryAtText = retryAt.toString();
+        if (schedule == null) {
+            return new TaskSchedule("once", "retry", retryAtText, null, "Asia/Shanghai", retryAtText, null, 0);
+        }
+        return schedule.withNextRunAt(retryAtText);
+    }
+
+    private int retryBackoffMinutes(int attemptCount) {
+        int minutes = (int) Math.pow(2, Math.max(0, attemptCount - 1));
+        return Math.max(1, Math.min(minutes, MAX_RETRY_BACKOFF_MINUTES));
     }
 
     private void upsertActions(TaskPlan plan) {
@@ -402,10 +440,10 @@ public class TaskPlanRepository {
     }
 
     private OffsetDateTime resolveNextFireTime(TaskStatus status, TaskSchedule schedule) {
-        if (status != TaskStatus.SCHEDULED) {
+        if (status != TaskStatus.SCHEDULED && status != TaskStatus.RETRY_WAITING) {
             return null;
         }
-        if (schedule == null || !schedule.isScheduled()) {
+        if (schedule == null) {
             return OffsetDateTime.now();
         }
         String effectiveRunAt = schedule.effectiveRunAt();
