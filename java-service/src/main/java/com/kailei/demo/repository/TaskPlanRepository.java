@@ -1,6 +1,7 @@
 package com.kailei.demo.repository;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -112,8 +113,63 @@ public class TaskPlanRepository {
                 .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
                 .isNotNull(TaskActionEntity::getNextRunAt)
                 .le(TaskActionEntity::getNextRunAt, now)
+                .and(wrapper -> wrapper.isNull(TaskActionEntity::getLockedBy)
+                        .or()
+                        .lt(TaskActionEntity::getLockExpireAt, now))
                 .orderByAsc(TaskActionEntity::getNextRunAt)
                 .last("limit " + safeLimit));
+    }
+
+    public boolean tryLockDueScheduledAction(String actionId,
+                                             OffsetDateTime nextRunAt,
+                                             OffsetDateTime now,
+                                             String lockedBy,
+                                             OffsetDateTime lockExpireAt) {
+        if (actionId == null || actionId.isBlank() || lockedBy == null || lockedBy.isBlank()) {
+            return false;
+        }
+        LambdaUpdateWrapper<TaskActionEntity> wrapper = new LambdaUpdateWrapper<TaskActionEntity>()
+                .set(TaskActionEntity::getLockedBy, lockedBy)
+                .set(TaskActionEntity::getLockedAt, now)
+                .set(TaskActionEntity::getLockExpireAt, lockExpireAt)
+                .set(TaskActionEntity::getIdempotencyKey, buildIdempotencyKey(actionId, nextRunAt))
+                .eq(TaskActionEntity::getActionId, actionId)
+                .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                .isNotNull(TaskActionEntity::getNextRunAt)
+                .le(TaskActionEntity::getNextRunAt, now)
+                .and(lock -> lock.isNull(TaskActionEntity::getLockedBy)
+                        .or()
+                        .lt(TaskActionEntity::getLockExpireAt, now));
+        if (nextRunAt != null) {
+            wrapper.eq(TaskActionEntity::getNextRunAt, nextRunAt);
+        }
+        return taskActionMapper.update(null, wrapper) == 1;
+    }
+
+    public void releaseActionLock(String actionId, String lockedBy) {
+        if (actionId == null || actionId.isBlank() || lockedBy == null || lockedBy.isBlank()) {
+            return;
+        }
+        taskActionMapper.update(null, new LambdaUpdateWrapper<TaskActionEntity>()
+                .set(TaskActionEntity::getLockedBy, null)
+                .set(TaskActionEntity::getLockedAt, null)
+                .set(TaskActionEntity::getLockExpireAt, null)
+                .eq(TaskActionEntity::getActionId, actionId)
+                .eq(TaskActionEntity::getLockedBy, lockedBy));
+    }
+
+    public void recordActionFailure(String actionId, String lockedBy, String errorMessage) {
+        if (actionId == null || actionId.isBlank() || lockedBy == null || lockedBy.isBlank()) {
+            return;
+        }
+        taskActionMapper.update(null, new LambdaUpdateWrapper<TaskActionEntity>()
+                .set(TaskActionEntity::getLockedBy, null)
+                .set(TaskActionEntity::getLockedAt, null)
+                .set(TaskActionEntity::getLockExpireAt, null)
+                .set(TaskActionEntity::getLastError, limit(errorMessage, 1024))
+                .setSql("retry_count = COALESCE(retry_count, 0) + 1")
+                .eq(TaskActionEntity::getActionId, actionId)
+                .eq(TaskActionEntity::getLockedBy, lockedBy));
     }
 
     private void syncActions(TaskPlan plan) {
@@ -167,6 +223,10 @@ public class TaskPlanRepository {
             return 100;
         }
         return Math.min(limit, MAX_DUE_ACTION_LIMIT);
+    }
+
+    private String buildIdempotencyKey(String actionId, OffsetDateTime nextRunAt) {
+        return actionId + ":" + (nextRunAt == null ? "unknown" : nextRunAt.toString());
     }
 
     private List<TaskActionEntity> findActions(String planId) {
