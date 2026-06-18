@@ -60,7 +60,7 @@ groups:
         expr: |
           histogram_quantile(
             0.95,
-            sum(rate(task_dispatch_execution_duration_seconds_bucket[10m])) by (le)
+            sum(rate(task_dispatch_execution_duration_seconds_bucket[10m])) by (le, result)
           ) > 30
         for: 10m
         labels:
@@ -68,4 +68,4 @@ groups:
           component: task-dispatch
         annotations:
           summary: "AI Secretary dispatch execution p95 is high"
-          description: "Dispatch execution p95 is above 30 seconds for 10 minutes. Check slow skills and downstream services."
+          description: "Dispatch execution p95 by result is above 30 seconds for 10 minutes. Check slow skills, failed dispatches, and downstream services."

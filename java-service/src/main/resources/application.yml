@@ -38,6 +38,11 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        task.dispatch.execution.duration: true
+      percentiles:
+        task.dispatch.execution.duration: 0.95,0.99
 
 mybatis-plus:
   configuration:
