@@ -34,6 +34,7 @@ public class AiTaskService {
     private final TaskExecutionService executionService;
     private final SkillCatalog skillCatalog;
     private final CronScheduleService cronScheduleService;
+    private final TaskStateMachineService stateMachineService;
     private final TaskExecutionLogRepository executionLogRepository;
     private final AiSessionRepository sessionRepository;
 
@@ -42,6 +43,7 @@ public class AiTaskService {
                          TaskExecutionService executionService,
                          SkillCatalog skillCatalog,
                          CronScheduleService cronScheduleService,
+                         TaskStateMachineService stateMachineService,
                          TaskExecutionLogRepository executionLogRepository,
                          AiSessionRepository sessionRepository) {
         this.pythonClient = pythonClient;
@@ -49,6 +51,7 @@ public class AiTaskService {
         this.executionService = executionService;
         this.skillCatalog = skillCatalog;
         this.cronScheduleService = cronScheduleService;
+        this.stateMachineService = stateMachineService;
         this.executionLogRepository = executionLogRepository;
         this.sessionRepository = sessionRepository;
     }
@@ -93,9 +96,6 @@ public class AiTaskService {
         String requestedOperator = request == null ? null : request.operatorUserId();
         ensureOperatorCanAccess(plan, requestedOperator);
         String effectiveOperator = effectiveOperator(requestedOperator, plan.userId());
-        if (plan.status() != TaskStatus.WAITING_CONFIRM) {
-            throw new IllegalArgumentException("只有 WAITING_CONFIRM 状态的任务计划允许编辑: " + planId);
-        }
 
         List<TaskAction> nextActions = new ArrayList<>();
         boolean matched = false;
@@ -105,9 +105,7 @@ public class AiTaskService {
                 continue;
             }
             matched = true;
-            if (action.status() != TaskStatus.WAITING_CONFIRM) {
-                throw new IllegalArgumentException("只有 WAITING_CONFIRM 状态的任务动作允许编辑: " + actionId);
-            }
+            stateMachineService.ensureEditable(plan, action);
             TaskSchedule nextSchedule = request == null || request.schedule() == null
                     ? null
                     : cronScheduleService.ensureCronAndNextRun(request.schedule());
@@ -170,7 +168,7 @@ public class AiTaskService {
         TaskPlan plan = get(planId);
         ensureOperatorCanAccess(plan, operatorUserId);
         String effectiveOperator = effectiveOperator(operatorUserId, plan.userId());
-        if (plan.status() != TaskStatus.WAITING_CONFIRM) {
+        if (!stateMachineService.canConfirm(plan)) {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
 
@@ -191,11 +189,7 @@ public class AiTaskService {
         if (plan.status() == TaskStatus.CANCELLED) {
             return new ConfirmTaskResponse(plan.planId(), plan.status(), summarize(plan.tasks()), plan);
         }
-        boolean hasExecutedAction = plan.tasks().stream()
-                .anyMatch(action -> action.status() == TaskStatus.EXECUTED);
-        if (hasExecutedAction) {
-            throw new IllegalArgumentException("任务已存在已执行动作，不能整体取消: " + planId);
-        }
+        stateMachineService.ensureCancelable(plan);
 
         String cancelReason = reason == null || reason.isBlank() ? "用户主动取消" : reason;
         List<TaskAction> nextActions = plan.tasks().stream()
@@ -226,9 +220,7 @@ public class AiTaskService {
                 continue;
             }
             matched = true;
-            if (action.status() != TaskStatus.FAILED) {
-                throw new IllegalArgumentException("只有 FAILED 状态的动作允许重试: " + actionId);
-            }
+            stateMachineService.ensureRetryable(action);
             nextActions.add(executionService.executeNow(plan.planId(), plan.userId(), action, effectiveOperator));
         }
         if (!matched) {
