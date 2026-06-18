@@ -30,6 +30,7 @@ import java.util.Set;
 public class TaskPlanRepository {
 
     private static final int MAX_PAGE_SIZE = 100;
+    private static final int MAX_DUE_ACTION_LIMIT = 500;
 
     private final TaskPlanMapper taskPlanMapper;
     private final TaskActionMapper taskActionMapper;
@@ -105,6 +106,16 @@ public class TaskPlanRepository {
                 .toList();
     }
 
+    public List<TaskActionEntity> findDueScheduledActions(OffsetDateTime now, Integer limit) {
+        int safeLimit = sanitizeDueActionLimit(limit);
+        return taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getStatus, TaskStatus.SCHEDULED.name())
+                .isNotNull(TaskActionEntity::getNextRunAt)
+                .le(TaskActionEntity::getNextRunAt, now)
+                .orderByAsc(TaskActionEntity::getNextRunAt)
+                .last("limit " + safeLimit));
+    }
+
     private void syncActions(TaskPlan plan) {
         Set<String> currentActionIds = new LinkedHashSet<>();
         for (int i = 0; i < plan.tasks().size(); i++) {
@@ -149,6 +160,13 @@ public class TaskPlanRepository {
             return 20;
         }
         return Math.min(pageSize, MAX_PAGE_SIZE);
+    }
+
+    private int sanitizeDueActionLimit(Integer limit) {
+        if (limit == null || limit < 1) {
+            return 100;
+        }
+        return Math.min(limit, MAX_DUE_ACTION_LIMIT);
     }
 
     private List<TaskActionEntity> findActions(String planId) {
