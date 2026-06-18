@@ -159,19 +159,41 @@ public class TaskPlanRepository {
         return storedAction;
     }
 
-    public TaskAction markActionTimeout(TaskAction action, OffsetDateTime timeoutAt) {
-        String note = "Task execution timed out at " + timeoutAt;
-        return markActionResult(action.withStatus(TaskStatus.TIMEOUT, note));
+    public Optional<TaskAction> markActionTimeoutIfStillRunning(TaskAction action,
+                                                               OffsetDateTime timeoutAt,
+                                                               OffsetDateTime runningExpiredBefore) {
+        TaskActionEntity existing = taskActionMapper.selectById(action.actionId());
+        if (existing == null || !Objects.equals(existing.getStatus(), TaskStatus.RUNNING.name())) {
+            return Optional.empty();
+        }
+        if (existing.getLockedAt() != null && !existing.getLockedAt().isBefore(runningExpiredBefore)) {
+            return Optional.empty();
+        }
+        TaskAction timeoutAction = action.withStatus(TaskStatus.TIMEOUT, "Task execution timed out at " + timeoutAt);
+        TaskAction storedAction = resolveRetryState(timeoutAction, existing);
+        boolean updated = updateActionStatus(storedAction.actionId(), storedAction.status(), storedAction.executionNote(), storedAction.schedule(), true,
+                TaskStatus.RUNNING, runningExpiredBefore);
+        return updated ? Optional.of(storedAction) : Optional.empty();
     }
 
-    public void updateActionStatus(String actionId,
-                                   TaskStatus status,
-                                   String executionNote,
-                                   TaskSchedule schedule,
-                                   boolean releaseLock) {
+    public boolean updateActionStatus(String actionId,
+                                      TaskStatus status,
+                                      String executionNote,
+                                      TaskSchedule schedule,
+                                      boolean releaseLock) {
+        return updateActionStatus(actionId, status, executionNote, schedule, releaseLock, null, null);
+    }
+
+    private boolean updateActionStatus(String actionId,
+                                       TaskStatus status,
+                                       String executionNote,
+                                       TaskSchedule schedule,
+                                       boolean releaseLock,
+                                       TaskStatus expectedCurrentStatus,
+                                       OffsetDateTime lockedAtBefore) {
         TaskActionEntity existing = taskActionMapper.selectById(actionId);
         if (existing == null) {
-            return;
+            return false;
         }
         OffsetDateTime nextFireTime = resolveNextFireTime(status, schedule);
         Integer attemptCount = resolveAttemptCount(existing, status, nextFireTime);
@@ -183,6 +205,15 @@ public class TaskPlanRepository {
                 .set(TaskActionEntity::getAttemptCount, attemptCount)
                 .set(TaskActionEntity::getLastError, resolveLastError(status, executionNote))
                 .eq(TaskActionEntity::getActionId, actionId);
+        if (expectedCurrentStatus != null) {
+            wrapper.eq(TaskActionEntity::getStatus, expectedCurrentStatus.name());
+        }
+        if (lockedAtBefore != null) {
+            wrapper.and(condition -> condition
+                    .isNull(TaskActionEntity::getLockedAt)
+                    .or()
+                    .lt(TaskActionEntity::getLockedAt, lockedAtBefore));
+        }
         if (releaseLock) {
             wrapper.set(TaskActionEntity::getLockedBy, null)
                     .set(TaskActionEntity::getLockedAt, null);
@@ -190,7 +221,7 @@ public class TaskPlanRepository {
             wrapper.set(TaskActionEntity::getLockedBy, RUNNING_LOCK_OWNER)
                     .set(TaskActionEntity::getLockedAt, OffsetDateTime.now());
         }
-        taskActionMapper.update(null, wrapper);
+        return taskActionMapper.update(null, wrapper) > 0;
     }
 
     private TaskAction resolveRetryState(TaskAction action) {
@@ -201,6 +232,10 @@ public class TaskPlanRepository {
         if (existing == null) {
             return action;
         }
+        return resolveRetryState(action, existing);
+    }
+
+    private TaskAction resolveRetryState(TaskAction action, TaskActionEntity existing) {
         int maxRetries = existing.getMaxRetryCount() == null ? DEFAULT_MAX_RETRY_COUNT : existing.getMaxRetryCount();
         int nextAttemptCount = resolveAttemptCount(existing, action.status(), resolveNextFireTime(action.status(), action.schedule()));
         if (nextAttemptCount >= maxRetries) {
@@ -359,7 +394,7 @@ public class TaskPlanRepository {
     }
 
     private String resolveLastError(TaskStatus status, String executionNote) {
-        if (status == TaskStatus.FAILED || status == TaskStatus.TIMEOUT) {
+        if (status == TaskStatus.FAILED || status == TaskStatus.TIMEOUT || status == TaskStatus.RETRY_WAITING) {
             return limit(executionNote, 1024);
         }
         return null;
