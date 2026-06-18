@@ -72,7 +72,8 @@ public class TaskStateMachineService {
     }
 
     public boolean canDispatchScheduledAction(TaskAction action) {
-        return action != null && action.status() == TaskStatus.SCHEDULED;
+        return action != null && (action.status() == TaskStatus.SCHEDULED
+                || action.status() == TaskStatus.RETRY_WAITING);
     }
 
     public boolean canExecuteAction(TaskAction action) {
