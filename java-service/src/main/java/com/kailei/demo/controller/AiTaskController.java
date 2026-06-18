@@ -120,6 +120,8 @@ public class AiTaskController {
                                                                         @RequestParam(required = false) String dispatchOwner,
                                                                         @RequestParam(required = false) Boolean retryExhausted,
                                                                         @RequestParam(required = false) Boolean retryDue,
+                                                                        @RequestParam(required = false) String sortField,
+                                                                        @RequestParam(required = false) String sortDirection,
                                                                         @RequestParam(required = false) Long page,
                                                                         @RequestParam(required = false) Long size) {
         return toDispatchRecordResponsePage(dispatchRecordRepository.findAll(
@@ -132,6 +134,8 @@ public class AiTaskController {
                 dispatchOwner,
                 retryExhausted,
                 retryDue,
+                sortField,
+                sortDirection,
                 page,
                 size
         ));
