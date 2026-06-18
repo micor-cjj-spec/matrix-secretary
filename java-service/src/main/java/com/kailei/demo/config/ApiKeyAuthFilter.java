@@ -14,30 +14,41 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.List;
 
 @Component
 public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
     private static final String API_KEY_HEADER = "X-AI-Secretary-Key";
+    private static final String ADMIN_API_KEY_HEADER = "X-AI-Secretary-Admin-Key";
     private static final String BEARER_PREFIX = "Bearer ";
+    private static final List<String> ADMIN_PATHS = List.of(
+            "/api/ai-task/dispatch/metrics/summary",
+            "/api/ai-task/dispatch-records"
+    );
 
     private final String apiKey;
+    private final String adminApiKey;
     private final ObjectMapper objectMapper;
 
     public ApiKeyAuthFilter(@Value("${ai-secretary.api-key:}") String apiKey,
+                            @Value("${ai-secretary.admin-api-key:}") String adminApiKey,
                             ObjectMapper objectMapper) {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
+        this.adminApiKey = adminApiKey == null ? "" : adminApiKey.trim();
         this.objectMapper = objectMapper;
     }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        if (apiKey.isBlank()) {
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             return true;
         }
         String path = request.getRequestURI();
-        return "OPTIONS".equalsIgnoreCase(request.getMethod())
-                || !path.startsWith("/api/");
+        if (!path.startsWith("/api/")) {
+            return true;
+        }
+        return expectedApiKey(request).isBlank();
     }
 
     @Override
@@ -56,7 +67,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
                 response.getWriter(),
                 ApiErrorResponse.of(
                         "UNAUTHORIZED",
-                        "API Key 无效或缺失，请通过 X-AI-Secretary-Key 或 Authorization: Bearer <key> 传入有效凭证。",
+                        "API Key 无效或缺失，请通过 X-AI-Secretary-Key、X-AI-Secretary-Admin-Key 或 Authorization: Bearer <key> 传入有效凭证。",
                         request.getRequestURI(),
                         request.getHeader("X-Trace-Id")
                 )
@@ -64,15 +75,36 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     }
 
     private boolean isValidApiKey(HttpServletRequest request) {
+        String expectedKey = expectedApiKey(request);
+        if (expectedKey.isBlank()) {
+            return true;
+        }
+
+        String adminHeaderKey = request.getHeader(ADMIN_API_KEY_HEADER);
+        if (expectedKey.equals(adminHeaderKey)) {
+            return true;
+        }
+
         String headerKey = request.getHeader(API_KEY_HEADER);
-        if (apiKey.equals(headerKey)) {
+        if (expectedKey.equals(headerKey)) {
             return true;
         }
 
         String authorization = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (authorization != null && authorization.startsWith(BEARER_PREFIX)) {
-            return apiKey.equals(authorization.substring(BEARER_PREFIX.length()).trim());
+            return expectedKey.equals(authorization.substring(BEARER_PREFIX.length()).trim());
         }
         return false;
+    }
+
+    private String expectedApiKey(HttpServletRequest request) {
+        if (isAdminPath(request.getRequestURI()) && !adminApiKey.isBlank()) {
+            return adminApiKey;
+        }
+        return apiKey;
+    }
+
+    private boolean isAdminPath(String path) {
+        return ADMIN_PATHS.stream().anyMatch(path::equals);
     }
 }
