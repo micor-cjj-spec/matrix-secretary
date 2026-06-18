@@ -11,12 +11,14 @@ import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.RetryTaskRequest;
 import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskDetailResponse;
+import com.kailei.demo.model.TaskDispatchMetricsSummaryResponse;
 import com.kailei.demo.model.TaskDispatchRecordResponse;
 import com.kailei.demo.model.TaskExecutionLogResponse;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.repository.TaskDispatchRecordRepository;
 import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.service.AiTaskService;
+import com.kailei.demo.service.TaskDispatchMetrics;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -41,13 +43,16 @@ public class AiTaskController {
     private final AiTaskService aiTaskService;
     private final TaskExecutionLogRepository executionLogRepository;
     private final TaskDispatchRecordRepository dispatchRecordRepository;
+    private final TaskDispatchMetrics dispatchMetrics;
 
     public AiTaskController(AiTaskService aiTaskService,
                             TaskExecutionLogRepository executionLogRepository,
-                            TaskDispatchRecordRepository dispatchRecordRepository) {
+                            TaskDispatchRecordRepository dispatchRecordRepository,
+                            TaskDispatchMetrics dispatchMetrics) {
         this.aiTaskService = aiTaskService;
         this.executionLogRepository = executionLogRepository;
         this.dispatchRecordRepository = dispatchRecordRepository;
+        this.dispatchMetrics = dispatchMetrics;
     }
 
     @PostMapping("/preview")
@@ -83,6 +88,22 @@ public class AiTaskController {
                                            @RequestBody(required = false) RetryTaskRequest request) {
         String operatorUserId = request == null ? null : request.operatorUserId();
         return aiTaskService.retryAction(planId, actionId, operatorUserId);
+    }
+
+    @GetMapping("/dispatch/metrics/summary")
+    public TaskDispatchMetricsSummaryResponse dispatchMetricsSummary() {
+        return new TaskDispatchMetricsSummaryResponse(
+                dispatchRecordRepository.countRunningRecords(),
+                dispatchRecordRepository.countFailedRecords(),
+                dispatchRecordRepository.countRetryScheduledRecords(),
+                dispatchRecordRepository.countRetryExhaustedRecords(),
+                dispatchMetrics.startedTotal(),
+                dispatchMetrics.succeededTotal(),
+                dispatchMetrics.failedTotal(),
+                dispatchMetrics.retryStartedTotal(),
+                dispatchMetrics.timeoutRecoveredTotal(),
+                OffsetDateTime.now()
+        );
     }
 
     @GetMapping("/{planId}")

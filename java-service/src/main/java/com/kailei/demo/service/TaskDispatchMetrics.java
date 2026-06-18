@@ -101,6 +101,26 @@ public class TaskDispatchMetrics {
         timerByResult(result).record(Duration.ofNanos(durationNanos));
     }
 
+    public double startedTotal() {
+        return startedCounter.count();
+    }
+
+    public double succeededTotal() {
+        return succeededCounter.count();
+    }
+
+    public double failedTotal() {
+        return failedCounter.count();
+    }
+
+    public double retryStartedTotal() {
+        return retryStartedCounter.count();
+    }
+
+    public double timeoutRecoveredTotal() {
+        return timeoutRecoveredCounter.count();
+    }
+
     private Timer timerByResult(String result) {
         if (RESULT_SUCCEEDED.equals(result)) {
             return succeededExecutionDurationTimer;
