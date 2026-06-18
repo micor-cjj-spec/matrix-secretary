@@ -1,5 +1,6 @@
 package com.kailei.demo.service;
 
+import com.kailei.demo.exception.BusinessException;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
 import com.kailei.demo.model.TaskSchedule;
@@ -35,7 +36,7 @@ class TaskStateMachineServiceTest {
         TaskPlan plan = plan(TaskStatus.SCHEDULED, action);
 
         assertFalse(service.canEdit(plan, action));
-        assertThrows(IllegalArgumentException.class, () -> service.ensureEditable(plan, action));
+        assertThrows(BusinessException.class, () -> service.ensureEditable(plan, action));
     }
 
     @Test
@@ -44,7 +45,7 @@ class TaskStateMachineServiceTest {
         TaskPlan plan = plan(TaskStatus.WAITING_CONFIRM, action);
 
         assertFalse(service.canEdit(plan, action));
-        assertThrows(IllegalArgumentException.class, () -> service.ensureEditable(plan, action));
+        assertThrows(BusinessException.class, () -> service.ensureEditable(plan, action));
     }
 
     @Test
@@ -66,7 +67,7 @@ class TaskStateMachineServiceTest {
         TaskPlan plan = plan(TaskStatus.EXECUTED, action(TaskStatus.EXECUTED));
 
         assertFalse(service.canCancel(plan));
-        assertThrows(IllegalArgumentException.class, () -> service.ensureCancelable(plan));
+        assertThrows(BusinessException.class, () -> service.ensureCancelable(plan));
     }
 
     @Test
@@ -77,7 +78,7 @@ class TaskStateMachineServiceTest {
         assertTrue(service.canRetry(failedAction));
         assertDoesNotThrow(() -> service.ensureRetryable(failedAction));
         assertFalse(service.canRetry(scheduledAction));
-        assertThrows(IllegalArgumentException.class, () -> service.ensureRetryable(scheduledAction));
+        assertThrows(BusinessException.class, () -> service.ensureRetryable(scheduledAction));
     }
 
     @Test
