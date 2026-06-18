@@ -35,8 +35,6 @@ public class AiTaskService {
     private static final String SYSTEM_OPERATOR = "system-scheduler";
     private static final int DISPATCH_BATCH_SIZE = 100;
     private static final int DISPATCH_LOCK_TIMEOUT_MINUTES = 5;
-    private static final int DEFAULT_MAX_RETRY_COUNT = 3;
-    private static final int MAX_RETRY_BACKOFF_MINUTES = 30;
 
     private final PythonSemanticClient pythonClient;
     private final TaskPlanRepository repository;
@@ -46,6 +44,7 @@ public class AiTaskService {
     private final TaskStateMachineService stateMachineService;
     private final TaskExecutionLogRepository executionLogRepository;
     private final AiSessionRepository sessionRepository;
+    private final DispatchRetryPolicy retryPolicy;
 
     public AiTaskService(PythonSemanticClient pythonClient,
                          TaskPlanRepository repository,
@@ -54,7 +53,8 @@ public class AiTaskService {
                          CronScheduleService cronScheduleService,
                          TaskStateMachineService stateMachineService,
                          TaskExecutionLogRepository executionLogRepository,
-                         AiSessionRepository sessionRepository) {
+                         AiSessionRepository sessionRepository,
+                         DispatchRetryPolicy retryPolicy) {
         this.pythonClient = pythonClient;
         this.repository = repository;
         this.executionService = executionService;
@@ -63,6 +63,7 @@ public class AiTaskService {
         this.stateMachineService = stateMachineService;
         this.executionLogRepository = executionLogRepository;
         this.sessionRepository = sessionRepository;
+        this.retryPolicy = retryPolicy;
     }
 
     public TaskPlan preview(PreviewTaskRequest request) {
@@ -316,8 +317,8 @@ public class AiTaskService {
                             return action;
                         }
                         TaskAction next = dispatchIfDue(plan, action, now);
-                        if (next.status() == TaskStatus.FAILED && shouldRetry(dueAction)) {
-                            next = scheduleRetry(next, dueAction, now);
+                        if (next.status() == TaskStatus.FAILED && retryPolicy.shouldRetry(dueAction.getRetryCount(), dueAction.getMaxRetryCount())) {
+                            next = retryPolicy.scheduleRetry(next, dueAction.getRetryCount(), now);
                             retryScheduled[0] = true;
                         }
                         dispatchedAction[0] = next;
@@ -344,35 +345,6 @@ public class AiTaskService {
             log.warn("Dispatch due action failed, actionId={}, planId={}", dueAction.getActionId(), dueAction.getPlanId(), ex);
             repository.recordActionFailure(dueAction.getActionId(), lockOwner, ex.getMessage());
         }
-    }
-
-    private boolean shouldRetry(TaskActionEntity dueAction) {
-        return valueOrDefault(dueAction.getRetryCount(), 0) < valueOrDefault(dueAction.getMaxRetryCount(), DEFAULT_MAX_RETRY_COUNT);
-    }
-
-    private TaskAction scheduleRetry(TaskAction failedAction, TaskActionEntity dueAction, OffsetDateTime now) {
-        int nextRetryCount = valueOrDefault(dueAction.getRetryCount(), 0) + 1;
-        int backoffMinutes = retryBackoffMinutes(nextRetryCount);
-        OffsetDateTime retryAt = now.plusMinutes(backoffMinutes);
-        TaskSchedule currentSchedule = failedAction.schedule() == null
-                ? new TaskSchedule("once", "retry", retryAt.toString(), null, "Asia/Shanghai", retryAt.toString(), null, 0)
-                : failedAction.schedule();
-        TaskSchedule retrySchedule = currentSchedule.withNextRunAt(retryAt.toString());
-        String note = "任务执行失败，已安排第 " + nextRetryCount + " 次重试，retryAt=" + retryAt
-                + ", reason=" + failedAction.executionNote();
-        return failedAction.withSchedule(retrySchedule).withStatus(TaskStatus.SCHEDULED, note);
-    }
-
-    private int retryBackoffMinutes(int retryCount) {
-        int minutes = 1;
-        for (int i = 1; i < retryCount; i++) {
-            minutes = Math.min(minutes * 2, MAX_RETRY_BACKOFF_MINUTES);
-        }
-        return minutes;
-    }
-
-    private int valueOrDefault(Integer value, int defaultValue) {
-        return value == null ? defaultValue : value;
     }
 
     private void ensureSameUser(TaskPlan plan, String userId) {
