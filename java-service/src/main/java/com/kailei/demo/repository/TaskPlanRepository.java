@@ -136,6 +136,39 @@ public class TaskPlanRepository {
                 .eq(TaskActionEntity::getLockedBy, lockOwner));
     }
 
+    public void markActionRunning(TaskAction action, String note) {
+        updateActionStatus(action.actionId(), TaskStatus.RUNNING, note, action.schedule(), false);
+    }
+
+    public void markActionResult(TaskAction action) {
+        updateActionStatus(action.actionId(), action.status(), action.executionNote(), action.schedule(), true);
+    }
+
+    public void updateActionStatus(String actionId,
+                                   TaskStatus status,
+                                   String executionNote,
+                                   TaskSchedule schedule,
+                                   boolean releaseLock) {
+        TaskActionEntity existing = taskActionMapper.selectById(actionId);
+        if (existing == null) {
+            return;
+        }
+        OffsetDateTime nextFireTime = resolveNextFireTime(status, schedule);
+        Integer attemptCount = resolveAttemptCount(existing, status, nextFireTime);
+        LambdaUpdateWrapper<TaskActionEntity> wrapper = new LambdaUpdateWrapper<TaskActionEntity>()
+                .set(TaskActionEntity::getStatus, status.name())
+                .set(TaskActionEntity::getExecutionNote, limit(executionNote, 512))
+                .set(TaskActionEntity::getNextFireTime, nextFireTime)
+                .set(TaskActionEntity::getAttemptCount, attemptCount)
+                .set(TaskActionEntity::getLastError, resolveLastError(status, executionNote))
+                .eq(TaskActionEntity::getActionId, actionId);
+        if (releaseLock) {
+            wrapper.set(TaskActionEntity::getLockedBy, null)
+                    .set(TaskActionEntity::getLockedAt, null);
+        }
+        taskActionMapper.update(null, wrapper);
+    }
+
     private void upsertActions(TaskPlan plan) {
         List<TaskActionEntity> existingActions = findActions(plan.planId());
         Map<String, TaskActionEntity> existingById = new HashMap<>();
@@ -236,39 +269,40 @@ public class TaskPlanRepository {
         entity.setStatus(action.status().name());
         entity.setExecutionNote(limit(action.executionNote(), 512));
         entity.setSortOrder(sortOrder);
-        entity.setNextFireTime(resolveNextFireTime(action.status(), action.schedule()));
-        entity.setAttemptCount(resolveAttemptCount(existing, action));
+        OffsetDateTime nextFireTime = resolveNextFireTime(action.status(), action.schedule());
+        entity.setNextFireTime(nextFireTime);
+        entity.setAttemptCount(resolveAttemptCount(existing, action.status(), nextFireTime));
         entity.setMaxRetryCount(existing == null || existing.getMaxRetryCount() == null ? DEFAULT_MAX_RETRY_COUNT : existing.getMaxRetryCount());
         entity.setIdempotencyKey(existing == null || existing.getIdempotencyKey() == null ? action.actionId() : existing.getIdempotencyKey());
-        entity.setLastError(resolveLastError(action));
+        entity.setLastError(resolveLastError(action.status(), action.executionNote()));
         copyLockIfStillValid(existing, entity);
         return entity;
     }
 
-    private int resolveAttemptCount(TaskActionEntity existing, TaskAction action) {
+    private int resolveAttemptCount(TaskActionEntity existing, TaskStatus status, OffsetDateTime nextFireTime) {
         int current = existing == null || existing.getAttemptCount() == null ? 0 : existing.getAttemptCount();
         if (existing == null) {
             return current;
         }
         String previousStatus = existing.getStatus();
-        String nextStatus = action.status().name();
-        boolean terminalAttemptResult = action.status() == TaskStatus.EXECUTED
-                || action.status() == TaskStatus.FAILED
-                || action.status() == TaskStatus.TIMEOUT;
-        boolean retryWaitingResult = action.status() == TaskStatus.RETRY_WAITING;
+        String nextStatus = status.name();
+        boolean terminalAttemptResult = status == TaskStatus.EXECUTED
+                || status == TaskStatus.FAILED
+                || status == TaskStatus.TIMEOUT;
+        boolean retryWaitingResult = status == TaskStatus.RETRY_WAITING;
         boolean statusChanged = !Objects.equals(previousStatus, nextStatus);
-        boolean recurringScheduledAdvanced = action.status() == TaskStatus.SCHEDULED
+        boolean recurringScheduledAdvanced = status == TaskStatus.SCHEDULED
                 && Objects.equals(previousStatus, TaskStatus.SCHEDULED.name())
-                && !Objects.equals(existing.getNextFireTime(), resolveNextFireTime(action.status(), action.schedule()));
-        if ((terminalAttemptResult && statusChanged) || retryWaitingResult || recurringScheduledAdvanced) {
+                && !Objects.equals(existing.getNextFireTime(), nextFireTime);
+        if ((terminalAttemptResult && statusChanged) || (retryWaitingResult && statusChanged) || recurringScheduledAdvanced) {
             return current + 1;
         }
         return current;
     }
 
-    private String resolveLastError(TaskAction action) {
-        if (action.status() == TaskStatus.FAILED || action.status() == TaskStatus.TIMEOUT) {
-            return limit(action.executionNote(), 1024);
+    private String resolveLastError(TaskStatus status, String executionNote) {
+        if (status == TaskStatus.FAILED || status == TaskStatus.TIMEOUT) {
+            return limit(executionNote, 1024);
         }
         return null;
     }
@@ -328,7 +362,7 @@ public class TaskPlanRepository {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("JSON序列化失败", ex);
+            throw new IllegalStateException("JSON serialization failed", ex);
         }
     }
 
