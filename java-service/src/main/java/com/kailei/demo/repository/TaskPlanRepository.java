@@ -158,6 +158,20 @@ public class TaskPlanRepository {
                 .eq(TaskActionEntity::getLockedBy, lockedBy));
     }
 
+    public void recordActionRetry(String actionId, String lockedBy, String errorMessage) {
+        if (actionId == null || actionId.isBlank() || lockedBy == null || lockedBy.isBlank()) {
+            return;
+        }
+        taskActionMapper.update(null, new LambdaUpdateWrapper<TaskActionEntity>()
+                .set(TaskActionEntity::getLockedBy, null)
+                .set(TaskActionEntity::getLockedAt, null)
+                .set(TaskActionEntity::getLockExpireAt, null)
+                .set(TaskActionEntity::getLastError, limit(errorMessage, 1024))
+                .setSql("retry_count = COALESCE(retry_count, 0) + 1")
+                .eq(TaskActionEntity::getActionId, actionId)
+                .eq(TaskActionEntity::getLockedBy, lockedBy));
+    }
+
     public void recordActionFailure(String actionId, String lockedBy, String errorMessage) {
         if (actionId == null || actionId.isBlank() || lockedBy == null || lockedBy.isBlank()) {
             return;
