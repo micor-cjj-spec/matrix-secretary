@@ -237,12 +237,40 @@ public class TaskPlanRepository {
         entity.setExecutionNote(limit(action.executionNote(), 512));
         entity.setSortOrder(sortOrder);
         entity.setNextFireTime(resolveNextFireTime(action.status(), action.schedule()));
-        entity.setAttemptCount(existing == null || existing.getAttemptCount() == null ? 0 : existing.getAttemptCount());
+        entity.setAttemptCount(resolveAttemptCount(existing, action));
         entity.setMaxRetryCount(existing == null || existing.getMaxRetryCount() == null ? DEFAULT_MAX_RETRY_COUNT : existing.getMaxRetryCount());
         entity.setIdempotencyKey(existing == null || existing.getIdempotencyKey() == null ? action.actionId() : existing.getIdempotencyKey());
-        entity.setLastError(action.status() == TaskStatus.FAILED ? limit(action.executionNote(), 1024) : null);
+        entity.setLastError(resolveLastError(action));
         copyLockIfStillValid(existing, entity);
         return entity;
+    }
+
+    private int resolveAttemptCount(TaskActionEntity existing, TaskAction action) {
+        int current = existing == null || existing.getAttemptCount() == null ? 0 : existing.getAttemptCount();
+        if (existing == null) {
+            return current;
+        }
+        String previousStatus = existing.getStatus();
+        String nextStatus = action.status().name();
+        boolean terminalAttemptResult = action.status() == TaskStatus.EXECUTED
+                || action.status() == TaskStatus.FAILED
+                || action.status() == TaskStatus.TIMEOUT;
+        boolean retryWaitingResult = action.status() == TaskStatus.RETRY_WAITING;
+        boolean statusChanged = !Objects.equals(previousStatus, nextStatus);
+        boolean recurringScheduledAdvanced = action.status() == TaskStatus.SCHEDULED
+                && Objects.equals(previousStatus, TaskStatus.SCHEDULED.name())
+                && !Objects.equals(existing.getNextFireTime(), resolveNextFireTime(action.status(), action.schedule()));
+        if ((terminalAttemptResult && statusChanged) || retryWaitingResult || recurringScheduledAdvanced) {
+            return current + 1;
+        }
+        return current;
+    }
+
+    private String resolveLastError(TaskAction action) {
+        if (action.status() == TaskStatus.FAILED || action.status() == TaskStatus.TIMEOUT) {
+            return limit(action.executionNote(), 1024);
+        }
+        return null;
     }
 
     private void copyLockIfStillValid(TaskActionEntity existing, TaskActionEntity next) {
