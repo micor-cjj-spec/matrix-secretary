@@ -285,11 +285,23 @@ public class AiTaskService {
 
     public void dispatchDueOnceTasks() {
         OffsetDateTime now = OffsetDateTime.now();
-        repository.findDueScheduledActions(now, DISPATCH_BATCH_SIZE)
-                .forEach(dueAction -> dispatchDueAction(dueAction, now));
+        List<TaskActionEntity> dueActions = repository.findDueScheduledActions(now, DISPATCH_BATCH_SIZE);
+        DispatchStats stats = new DispatchStats(dueActions.size());
+        dueActions.forEach(dueAction -> stats.record(dispatchDueAction(dueAction, now)));
+        if (stats.scanned == 0) {
+            log.debug("Task dispatch finished, scanned=0");
+            return;
+        }
+        log.info("Task dispatch finished, scanned={}, lockSkipped={}, noop={}, succeeded={}, retried={}, failed={}",
+                stats.scanned,
+                stats.lockSkipped,
+                stats.noop,
+                stats.succeeded,
+                stats.retried,
+                stats.failed);
     }
 
-    private void dispatchDueAction(TaskActionEntity dueAction, OffsetDateTime now) {
+    private DispatchOutcome dispatchDueAction(TaskActionEntity dueAction, OffsetDateTime now) {
         String lockOwner = SYSTEM_OPERATOR + "-" + UUID.randomUUID().toString().substring(0, 8);
         OffsetDateTime lockExpireAt = now.plusMinutes(DISPATCH_LOCK_TIMEOUT_MINUTES);
         boolean locked = repository.tryLockDueScheduledAction(
@@ -300,14 +312,14 @@ public class AiTaskService {
                 lockExpireAt
         );
         if (!locked) {
-            return;
+            return DispatchOutcome.LOCK_SKIPPED;
         }
 
         try {
             TaskPlan plan = repository.findById(dueAction.getPlanId()).orElse(null);
             if (plan == null) {
                 repository.releaseActionLock(dueAction.getActionId(), lockOwner);
-                return;
+                return DispatchOutcome.NOOP;
             }
 
             TaskAction[] dispatchedAction = new TaskAction[1];
@@ -329,7 +341,7 @@ public class AiTaskService {
 
             if (dispatchedAction[0] == null || nextActions.equals(plan.tasks())) {
                 repository.releaseActionLock(dueAction.getActionId(), lockOwner);
-                return;
+                return DispatchOutcome.NOOP;
             }
 
             TaskPlan saved = repository.save(plan.withStatus(resolvePlanStatus(nextActions), nextActions));
@@ -337,14 +349,18 @@ public class AiTaskService {
 
             if (retryScheduled[0]) {
                 repository.recordActionRetry(dueAction.getActionId(), lockOwner, dispatchedAction[0].executionNote());
-            } else if (dispatchedAction[0].status() == TaskStatus.FAILED) {
-                repository.recordActionFailure(dueAction.getActionId(), lockOwner, dispatchedAction[0].executionNote());
-            } else {
-                repository.releaseActionLock(dueAction.getActionId(), lockOwner);
+                return DispatchOutcome.RETRIED;
             }
+            if (dispatchedAction[0].status() == TaskStatus.FAILED) {
+                repository.recordActionFailure(dueAction.getActionId(), lockOwner, dispatchedAction[0].executionNote());
+                return DispatchOutcome.FAILED;
+            }
+            repository.releaseActionLock(dueAction.getActionId(), lockOwner);
+            return DispatchOutcome.SUCCEEDED;
         } catch (RuntimeException ex) {
             log.warn("Dispatch due action failed, actionId={}, planId={}", dueAction.getActionId(), dueAction.getPlanId(), ex);
             repository.recordActionFailure(dueAction.getActionId(), lockOwner, ex.getMessage());
+            return DispatchOutcome.FAILED;
         }
     }
 
@@ -419,6 +435,37 @@ public class AiTaskService {
             return executed;
         } catch (DateTimeParseException ex) {
             return action.withStatus(TaskStatus.FAILED, "时间格式无法解析: " + schedule.effectiveRunAt());
+        }
+    }
+
+    private enum DispatchOutcome {
+        LOCK_SKIPPED,
+        NOOP,
+        SUCCEEDED,
+        RETRIED,
+        FAILED
+    }
+
+    private static final class DispatchStats {
+        private final int scanned;
+        private int lockSkipped;
+        private int noop;
+        private int succeeded;
+        private int retried;
+        private int failed;
+
+        private DispatchStats(int scanned) {
+            this.scanned = scanned;
+        }
+
+        private void record(DispatchOutcome outcome) {
+            switch (outcome) {
+                case LOCK_SKIPPED -> lockSkipped++;
+                case NOOP -> noop++;
+                case SUCCEEDED -> succeeded++;
+                case RETRIED -> retried++;
+                case FAILED -> failed++;
+            }
         }
     }
 }
