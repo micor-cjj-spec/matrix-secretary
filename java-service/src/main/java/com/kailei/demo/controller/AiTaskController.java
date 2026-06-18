@@ -81,6 +81,11 @@ public class AiTaskController {
         return aiTaskService.page(userId, status, sessionId, pageNo, pageSize);
     }
 
+    @GetMapping("/logs/by-trace")
+    public List<TaskExecutionLogEntity> logsByTrace(@RequestParam String traceId) {
+        return executionLogRepository.findByTraceId(traceId);
+    }
+
     @GetMapping("/{planId}")
     public TaskPlan get(@PathVariable String planId,
                         @RequestParam(required = false) String userId) {
