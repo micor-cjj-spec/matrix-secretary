@@ -86,4 +86,13 @@ public class TaskStateMachineService {
                 || action.status() == TaskStatus.SCHEDULED
                 || action.status() == TaskStatus.FAILED);
     }
+
+    public void ensureExecutable(TaskAction action) {
+        if (action == null) {
+            throw new IllegalArgumentException("任务动作不能为空");
+        }
+        if (!canExecute(action)) {
+            throw new IllegalArgumentException("当前状态不允许执行任务动作: " + action.actionId() + ", status=" + action.status());
+        }
+    }
 }
