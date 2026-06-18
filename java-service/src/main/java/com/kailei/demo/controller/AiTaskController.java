@@ -110,6 +110,7 @@ public class AiTaskController {
     public PageResult<TaskDispatchRecordResponse> globalDispatchRecords(@RequestParam(required = false) String planId,
                                                                         @RequestParam(required = false) String actionId,
                                                                         @RequestParam(required = false) String status,
+                                                                        @RequestParam(required = false) String timeField,
                                                                         @RequestParam(required = false)
                                                                         @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
                                                                         OffsetDateTime startTime,
@@ -125,6 +126,7 @@ public class AiTaskController {
                 planId,
                 actionId,
                 status,
+                timeField,
                 startTime,
                 endTime,
                 dispatchOwner,
