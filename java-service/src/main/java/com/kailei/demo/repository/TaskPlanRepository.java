@@ -110,6 +110,17 @@ public class TaskPlanRepository {
                 .last("LIMIT " + sanitizeLimit(limit)));
     }
 
+    public List<TaskActionEntity> findTimedOutRunningActions(OffsetDateTime runningExpiredBefore, int limit) {
+        return taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getStatus, TaskStatus.RUNNING.name())
+                .and(wrapper -> wrapper
+                        .isNull(TaskActionEntity::getLockedAt)
+                        .or()
+                        .lt(TaskActionEntity::getLockedAt, runningExpiredBefore))
+                .orderByAsc(TaskActionEntity::getLockedAt)
+                .last("LIMIT " + sanitizeLimit(limit)));
+    }
+
     public boolean tryLockScheduledAction(String actionId,
                                           OffsetDateTime now,
                                           OffsetDateTime lockExpiredBefore,
@@ -145,6 +156,11 @@ public class TaskPlanRepository {
         TaskAction storedAction = resolveRetryState(action);
         updateActionStatus(storedAction.actionId(), storedAction.status(), storedAction.executionNote(), storedAction.schedule(), true);
         return storedAction;
+    }
+
+    public TaskAction markActionTimeout(TaskAction action, OffsetDateTime timeoutAt) {
+        String note = "Task execution timed out at " + timeoutAt;
+        return markActionResult(action.withStatus(TaskStatus.TIMEOUT, note));
     }
 
     public void updateActionStatus(String actionId,
