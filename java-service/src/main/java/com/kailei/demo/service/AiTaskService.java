@@ -231,6 +231,7 @@ public class AiTaskService {
             }
             matched = true;
             stateMachineService.ensureRetryable(action);
+            repository.resetActionRuntimeState(action.actionId());
             nextActions.add(executionService.executeNow(plan.planId(), plan.traceId(), plan.userId(), action, effectiveOperator));
         }
         if (!matched) {
