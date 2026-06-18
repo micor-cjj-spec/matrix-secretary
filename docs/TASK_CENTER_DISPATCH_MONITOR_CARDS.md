@@ -59,10 +59,11 @@ export interface TaskDispatchMetricsSummary {
 GET /api/ai-task/dispatch-records?status=FAILED&page=1&size=20
 GET /api/ai-task/dispatch-records?status=RUNNING&page=1&size=20
 GET /api/ai-task/dispatch-records?retryExhausted=true&page=1&size=20
-GET /api/ai-task/dispatch-records?retryExhausted=false&page=1&size=20
+GET /api/ai-task/dispatch-records?retryDue=true&page=1&size=20
+GET /api/ai-task/dispatch-records?planId={planId}&actionId={actionId}&page=1&size=20
 ```
 
-用于任务中心监控页展示失败列表、RUNNING 列表、重试耗尽列表和等待重试列表。
+用于任务中心监控页展示失败列表、RUNNING 列表、重试耗尽列表、已到期重试列表，也可复用到任务详情页和 action 详情页。
 
 ### 任务详情聚合
 
@@ -72,13 +73,13 @@ GET /api/ai-task/{planId}/detail?userId=xxx&recentLogSize=20&recentDispatchSize=
 
 用于用户从监控卡片下钻到任务详情。
 
-### Plan 维度 Dispatch records 查询
+### 兼容的 Plan 维度 Dispatch records 查询
 
 ```http
 GET /api/ai-task/{planId}/dispatch-records?status=FAILED&page=1&size=20
 ```
 
-用于任务详情页继续分页查询。
+旧页面仍可使用；新页面建议优先使用统一全局接口并传入 `planId/actionId`。
 
 ## 页面布局草案
 
@@ -149,8 +150,23 @@ export interface TaskDispatchMetricsSummary {
   generatedAt: string
 }
 
+export interface DispatchRecordQuery {
+  planId?: string
+  actionId?: string
+  status?: 'RUNNING' | 'SUCCEEDED' | 'FAILED'
+  retryExhausted?: boolean
+  retryDue?: boolean
+  page?: number
+  size?: number
+}
+
 export async function fetchDispatchMetricsSummary() {
   const { data } = await axios.get<TaskDispatchMetricsSummary>('/api/ai-task/dispatch/metrics/summary')
+  return data
+}
+
+export async function fetchDispatchRecords(query: DispatchRecordQuery) {
+  const { data } = await axios.get('/api/ai-task/dispatch-records', { params: query })
   return data
 }
 ```
@@ -242,8 +258,12 @@ export function useDispatchMetricsSummary(refreshIntervalMs = 15000) {
 | RUNNING 当前值 | `/api/ai-task/dispatch-records?status=RUNNING&page=1&size=20` |
 | FAILED 当前值 | `/api/ai-task/dispatch-records?status=FAILED&page=1&size=20` |
 | 等待重试 | `/api/ai-task/dispatch-records?retryExhausted=false&page=1&size=20` |
+| 已到期重试 | `/api/ai-task/dispatch-records?retryDue=true&page=1&size=20` |
+| 未到期重试 | `/api/ai-task/dispatch-records?retryDue=false&page=1&size=20` |
 | 重试耗尽 | `/api/ai-task/dispatch-records?retryExhausted=true&page=1&size=20` |
 | 某条 dispatch record | 任务详情页 `/api/ai-task/{planId}/detail` |
+| 某个 plan 详情列表 | `/api/ai-task/dispatch-records?planId={planId}&page=1&size=20` |
+| 某个 action 详情列表 | `/api/ai-task/dispatch-records?planId={planId}&actionId={actionId}&page=1&size=20` |
 
 ## 当前边界
 
