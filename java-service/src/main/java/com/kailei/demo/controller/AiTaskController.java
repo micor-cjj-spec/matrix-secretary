@@ -106,6 +106,29 @@ public class AiTaskController {
         );
     }
 
+    @GetMapping("/dispatch-records")
+    public PageResult<TaskDispatchRecordResponse> globalDispatchRecords(@RequestParam(required = false) String status,
+                                                                        @RequestParam(required = false)
+                                                                        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+                                                                        OffsetDateTime startTime,
+                                                                        @RequestParam(required = false)
+                                                                        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+                                                                        OffsetDateTime endTime,
+                                                                        @RequestParam(required = false) String dispatchOwner,
+                                                                        @RequestParam(required = false) Boolean retryExhausted,
+                                                                        @RequestParam(required = false) Long page,
+                                                                        @RequestParam(required = false) Long size) {
+        return toDispatchRecordResponsePage(dispatchRecordRepository.findAll(
+                status,
+                startTime,
+                endTime,
+                dispatchOwner,
+                retryExhausted,
+                page,
+                size
+        ));
+    }
+
     @GetMapping("/{planId}")
     public TaskPlan get(@PathVariable String planId,
                         @RequestParam(required = false) String userId) {
