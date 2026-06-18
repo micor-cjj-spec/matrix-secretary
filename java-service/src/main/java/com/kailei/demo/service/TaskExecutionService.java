@@ -19,18 +19,22 @@ public class TaskExecutionService {
     private final GenericSkillExecutor genericSkillExecutor;
     private final TaskExecutionLogRepository executionLogRepository;
     private final CronScheduleService cronScheduleService;
+    private final TaskStateMachineService stateMachine;
 
     public TaskExecutionService(SkillCatalog skillCatalog,
                                 GenericSkillExecutor genericSkillExecutor,
                                 TaskExecutionLogRepository executionLogRepository,
-                                CronScheduleService cronScheduleService) {
+                                CronScheduleService cronScheduleService,
+                                TaskStateMachineService stateMachine) {
         this.skillCatalog = skillCatalog;
         this.genericSkillExecutor = genericSkillExecutor;
         this.executionLogRepository = executionLogRepository;
         this.cronScheduleService = cronScheduleService;
+        this.stateMachine = stateMachine;
     }
 
     public TaskAction confirmAction(String planId, String userId, TaskAction action, String operatorUserId) {
+        stateMachine.requireConfirmableAction(action);
         if (action.schedule() != null && action.schedule().isScheduled()) {
             TaskAction scheduledAction = action.withSchedule(cronScheduleService.ensureCronAndNextRun(action.schedule()));
             String note = "已进入调度队列: cron=" + scheduledAction.schedule().cron()
@@ -48,6 +52,7 @@ public class TaskExecutionService {
     }
 
     public TaskAction executeNow(String planId, String userId, TaskAction action, String operatorUserId) {
+        stateMachine.requireExecutableAction(action);
         SkillDefinition skill = skillCatalog.getOrUnknown(action.actionType());
         TaskAction next = genericSkillExecutor.execute(planId, userId, skill, action);
         executionLogRepository.logStateChange(planId, action, next, operatorUserId);
