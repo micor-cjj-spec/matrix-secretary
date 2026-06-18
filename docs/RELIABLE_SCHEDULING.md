@@ -122,7 +122,7 @@ The state machine understands these statuses:
 
 - `attemptCount` increments when an action reaches `EXECUTED`, `FAILED`, or `TIMEOUT` from another status.
 - `attemptCount` increments for recurring scheduled actions when `nextFireTime` advances.
-- `lastError` is populated for `FAILED` and `TIMEOUT` actions.
+- `lastError` is populated for `FAILED`, `TIMEOUT`, and `RETRY_WAITING` actions.
 
 ### 8. Action-level status update methods
 
@@ -131,7 +131,7 @@ The state machine understands these statuses:
 ```text
 markActionRunning(action, note)
 markActionResult(action)
-markActionTimeout(action, timeoutAt)
+markActionTimeoutIfStillRunning(action, timeoutAt, runningExpiredBefore)
 updateActionStatus(actionId, status, executionNote, schedule, releaseLock)
 ```
 
@@ -169,9 +169,11 @@ max: 30 minutes
 
 `AiTaskService.dispatchDueOnceTasks()` now runs timeout recovery before normal due-action dispatch.
 
-`TaskPlanRepository.findTimedOutRunningActions()` selects actions stuck in `RUNNING` whose `lockedAt` is missing or older than the configured running timeout. Each recovered action is passed through `markActionTimeout()`, which turns it into `TIMEOUT` and then reuses the same retry-backoff logic as normal failures.
+`TaskPlanRepository.findTimedOutRunningActions()` selects actions stuck in `RUNNING` whose `lockedAt` is missing or older than the configured running timeout. Each recovered action is passed through `markActionTimeoutIfStillRunning()`, which turns it into `TIMEOUT` and then reuses the same retry-backoff logic as normal failures.
 
-This means a worker crash during execution no longer leaves an action permanently stuck in `RUNNING`.
+Timeout recovery uses a guarded conditional update: the database row must still be `RUNNING`, and `lockedAt` must still be older than the timeout threshold. If the execution thread completes first and writes `EXECUTED` or `FAILED`, recovery is skipped and the plan is not overwritten.
+
+This means a worker crash during execution no longer leaves an action permanently stuck in `RUNNING`, while a race with a just-completed execution is protected.
 
 ## Still pending
 
@@ -190,9 +192,10 @@ This means a worker crash during execution no longer leaves an action permanentl
 5. An expired lock can be acquired again after 10 minutes.
 6. Two due actions under the same plan do not clear each other's locks.
 7. Non-confirmable actions cannot be confirmed, and non-failed/non-timeout actions cannot be retried.
-8. `FAILED` and `TIMEOUT` actions populate `lastError`.
+8. `FAILED`, `TIMEOUT`, and `RETRY_WAITING` actions populate `lastError`.
 9. Successful, failed, timed-out, and advanced recurring executions increment `attemptCount`.
 10. Immediate execution, manual retry, and scheduled dispatch all persist `RUNNING` before the final action result.
 11. Failed actions with retries remaining move to `RETRY_WAITING` with a future `nextFireTime`.
 12. Due `RETRY_WAITING` actions are scanned, locked, and executed by the same scheduler path.
 13. Stale `RUNNING` actions are converted to `TIMEOUT` and then either retried or finalized based on retry limits.
+14. Timeout recovery does not overwrite a concurrently completed action.
