@@ -76,6 +76,7 @@ public class TaskExecutionLogEntity {
     @ColumnComment("操作人类型")
     private String operatorType;
 
+    @Index
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 64)
     @ColumnComment("链路追踪ID")
     private String traceId;
