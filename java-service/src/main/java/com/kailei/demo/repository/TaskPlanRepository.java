@@ -17,6 +17,8 @@ import com.kailei.demo.model.TaskTarget;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -187,6 +189,9 @@ public class TaskPlanRepository {
         entity.setSourceSentence(action.sourceSentence());
         entity.setAnalysisNote(limit(action.analysisNote(), 512));
         entity.setStatus(action.status().name());
+        entity.setNextRunAt(parseOffsetDateTime(action.schedule() == null ? null : action.schedule().effectiveRunAt()));
+        entity.setLastRunAt(parseOffsetDateTime(action.schedule() == null ? null : action.schedule().lastRunAt()));
+        entity.setTriggerCount(action.schedule() == null ? 0 : action.schedule().triggerCount());
         entity.setExecutionNote(limit(action.executionNote(), 512));
         entity.setSortOrder(sortOrder);
         return entity;
@@ -229,6 +234,17 @@ public class TaskPlanRepository {
                 TaskStatus.valueOf(entity.getStatus()),
                 entity.getExecutionNote()
         );
+    }
+
+    private OffsetDateTime parseOffsetDateTime(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return OffsetDateTime.parse(value);
+        } catch (DateTimeParseException ex) {
+            return null;
+        }
     }
 
     private String writeJson(Object value) {
