@@ -53,12 +53,14 @@ public class TaskDispatchRecordRepository {
                                                         String dispatchOwner,
                                                         Boolean retryExhausted,
                                                         Boolean retryDue,
+                                                        String sortField,
+                                                        String sortDirection,
                                                         Long page,
                                                         Long size) {
         LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper = new LambdaQueryWrapper<>();
         applyIdentityFilters(wrapper, planId, actionId);
         applyQueryFilters(wrapper, status, timeField, startTime, endTime, dispatchOwner, retryExhausted, retryDue);
-        applyDefaultOrder(wrapper);
+        applySort(wrapper, sortField, sortDirection);
         return toPageResult(mapper.selectPage(
                 new Page<>(PageResult.normalizePage(page), PageResult.normalizeSize(size)),
                 wrapper
@@ -294,7 +296,34 @@ public class TaskDispatchRecordRepository {
     }
 
     private void applyDefaultOrder(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper) {
-        wrapper.orderByDesc(TaskDispatchRecordEntity::getTriggerAt)
+        applySort(wrapper, null, null);
+    }
+
+    private void applySort(LambdaQueryWrapper<TaskDispatchRecordEntity> wrapper,
+                           String sortField,
+                           String sortDirection) {
+        boolean ascending = "ASC".equalsIgnoreCase(sortDirection == null ? "" : sortDirection.trim());
+        String normalizedSortField = sortField == null ? "" : sortField.trim().toLowerCase();
+        if ("startedat".equals(normalizedSortField)) {
+            wrapper.orderBy(true, ascending, TaskDispatchRecordEntity::getStartedAt)
+                    .orderByDesc(TaskDispatchRecordEntity::getCreatedAt);
+            return;
+        }
+        if ("finishedat".equals(normalizedSortField)) {
+            wrapper.orderBy(true, ascending, TaskDispatchRecordEntity::getFinishedAt)
+                    .orderByDesc(TaskDispatchRecordEntity::getCreatedAt);
+            return;
+        }
+        if ("createdat".equals(normalizedSortField)) {
+            wrapper.orderBy(true, ascending, TaskDispatchRecordEntity::getCreatedAt);
+            return;
+        }
+        if ("nextretryat".equals(normalizedSortField)) {
+            wrapper.orderBy(true, ascending, TaskDispatchRecordEntity::getNextRetryAt)
+                    .orderByDesc(TaskDispatchRecordEntity::getCreatedAt);
+            return;
+        }
+        wrapper.orderBy(true, ascending, TaskDispatchRecordEntity::getTriggerAt)
                 .orderByDesc(TaskDispatchRecordEntity::getCreatedAt);
     }
 
