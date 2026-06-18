@@ -20,9 +20,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 @Repository
 public class TaskPlanRepository {
@@ -47,11 +51,7 @@ public class TaskPlanRepository {
         if (taskPlanMapper.updateById(planEntity) == 0) {
             taskPlanMapper.insert(planEntity);
         }
-        taskActionMapper.delete(new LambdaQueryWrapper<TaskActionEntity>()
-                .eq(TaskActionEntity::getPlanId, plan.planId()));
-        for (int i = 0; i < plan.tasks().size(); i++) {
-            taskActionMapper.insert(toActionEntity(plan.planId(), plan.tasks().get(i), i));
-        }
+        upsertActions(plan);
         return plan;
     }
 
@@ -136,6 +136,66 @@ public class TaskPlanRepository {
                 .eq(TaskActionEntity::getLockedBy, lockOwner));
     }
 
+    private void upsertActions(TaskPlan plan) {
+        List<TaskActionEntity> existingActions = findActions(plan.planId());
+        Map<String, TaskActionEntity> existingById = new HashMap<>();
+        for (TaskActionEntity existing : existingActions) {
+            existingById.put(existing.getActionId(), existing);
+        }
+
+        Set<String> nextActionIds = new HashSet<>();
+        for (int i = 0; i < plan.tasks().size(); i++) {
+            TaskAction action = plan.tasks().get(i);
+            nextActionIds.add(action.actionId());
+            TaskActionEntity existing = existingById.get(action.actionId());
+            TaskActionEntity next = toActionEntity(plan.planId(), action, i, existing);
+            if (existing == null) {
+                taskActionMapper.insert(next);
+            } else {
+                updateActionEntity(next);
+            }
+        }
+
+        existingActions.stream()
+                .map(TaskActionEntity::getActionId)
+                .filter(existingActionId -> !nextActionIds.contains(existingActionId))
+                .forEach(this::deleteActionById);
+    }
+
+    private void updateActionEntity(TaskActionEntity entity) {
+        taskActionMapper.update(null, new LambdaUpdateWrapper<TaskActionEntity>()
+                .set(TaskActionEntity::getPlanId, entity.getPlanId())
+                .set(TaskActionEntity::getActionType, entity.getActionType())
+                .set(TaskActionEntity::getSkillName, entity.getSkillName())
+                .set(TaskActionEntity::getTitle, entity.getTitle())
+                .set(TaskActionEntity::getContent, entity.getContent())
+                .set(TaskActionEntity::getTargetJson, entity.getTargetJson())
+                .set(TaskActionEntity::getScheduleJson, entity.getScheduleJson())
+                .set(TaskActionEntity::getArgsJson, entity.getArgsJson())
+                .set(TaskActionEntity::getPriority, entity.getPriority())
+                .set(TaskActionEntity::getRiskLevel, entity.getRiskLevel())
+                .set(TaskActionEntity::getConfidence, entity.getConfidence())
+                .set(TaskActionEntity::getRequiresConfirmation, entity.getRequiresConfirmation())
+                .set(TaskActionEntity::getSourceSentence, entity.getSourceSentence())
+                .set(TaskActionEntity::getAnalysisNote, entity.getAnalysisNote())
+                .set(TaskActionEntity::getStatus, entity.getStatus())
+                .set(TaskActionEntity::getExecutionNote, entity.getExecutionNote())
+                .set(TaskActionEntity::getSortOrder, entity.getSortOrder())
+                .set(TaskActionEntity::getNextFireTime, entity.getNextFireTime())
+                .set(TaskActionEntity::getLockedBy, entity.getLockedBy())
+                .set(TaskActionEntity::getLockedAt, entity.getLockedAt())
+                .set(TaskActionEntity::getAttemptCount, entity.getAttemptCount())
+                .set(TaskActionEntity::getMaxRetryCount, entity.getMaxRetryCount())
+                .set(TaskActionEntity::getIdempotencyKey, entity.getIdempotencyKey())
+                .set(TaskActionEntity::getLastError, entity.getLastError())
+                .eq(TaskActionEntity::getActionId, entity.getActionId()));
+    }
+
+    private void deleteActionById(String actionId) {
+        taskActionMapper.delete(new LambdaQueryWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getActionId, actionId));
+    }
+
     private List<TaskActionEntity> findActions(String planId) {
         return taskActionMapper.selectList(new LambdaQueryWrapper<TaskActionEntity>()
                 .eq(TaskActionEntity::getPlanId, planId)
@@ -156,7 +216,7 @@ public class TaskPlanRepository {
         return entity;
     }
 
-    private TaskActionEntity toActionEntity(String planId, TaskAction action, int sortOrder) {
+    private TaskActionEntity toActionEntity(String planId, TaskAction action, int sortOrder, TaskActionEntity existing) {
         TaskActionEntity entity = new TaskActionEntity();
         entity.setActionId(action.actionId());
         entity.setPlanId(planId);
@@ -177,11 +237,24 @@ public class TaskPlanRepository {
         entity.setExecutionNote(limit(action.executionNote(), 512));
         entity.setSortOrder(sortOrder);
         entity.setNextFireTime(resolveNextFireTime(action.status(), action.schedule()));
-        entity.setAttemptCount(0);
-        entity.setMaxRetryCount(DEFAULT_MAX_RETRY_COUNT);
-        entity.setIdempotencyKey(action.actionId());
+        entity.setAttemptCount(existing == null || existing.getAttemptCount() == null ? 0 : existing.getAttemptCount());
+        entity.setMaxRetryCount(existing == null || existing.getMaxRetryCount() == null ? DEFAULT_MAX_RETRY_COUNT : existing.getMaxRetryCount());
+        entity.setIdempotencyKey(existing == null || existing.getIdempotencyKey() == null ? action.actionId() : existing.getIdempotencyKey());
         entity.setLastError(action.status() == TaskStatus.FAILED ? limit(action.executionNote(), 1024) : null);
+        copyLockIfStillValid(existing, entity);
         return entity;
+    }
+
+    private void copyLockIfStillValid(TaskActionEntity existing, TaskActionEntity next) {
+        if (existing == null || existing.getLockedBy() == null) {
+            return;
+        }
+        boolean statusUnchanged = Objects.equals(existing.getStatus(), next.getStatus());
+        boolean fireTimeUnchanged = Objects.equals(existing.getNextFireTime(), next.getNextFireTime());
+        if (statusUnchanged && fireTimeUnchanged) {
+            next.setLockedBy(existing.getLockedBy());
+            next.setLockedAt(existing.getLockedAt());
+        }
     }
 
     private TaskPlan toDomain(TaskPlanEntity planEntity, List<TaskActionEntity> actionEntities) {
