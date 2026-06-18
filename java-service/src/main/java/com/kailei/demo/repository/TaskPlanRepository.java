@@ -33,6 +33,7 @@ public class TaskPlanRepository {
 
     private static final int DEFAULT_MAX_RETRY_COUNT = 3;
     private static final int MAX_RETRY_BACKOFF_MINUTES = 30;
+    private static final String RUNNING_LOCK_OWNER = "runtime-executor";
 
     private final TaskPlanMapper taskPlanMapper;
     private final TaskActionMapper taskActionMapper;
@@ -185,6 +186,9 @@ public class TaskPlanRepository {
         if (releaseLock) {
             wrapper.set(TaskActionEntity::getLockedBy, null)
                     .set(TaskActionEntity::getLockedAt, null);
+        } else if (status == TaskStatus.RUNNING) {
+            wrapper.set(TaskActionEntity::getLockedBy, RUNNING_LOCK_OWNER)
+                    .set(TaskActionEntity::getLockedAt, OffsetDateTime.now());
         }
         taskActionMapper.update(null, wrapper);
     }
