@@ -58,8 +58,9 @@ The current batch size is 100.
 `AiTaskService.dispatchDueOnceTasks()` now:
 
 ```text
-calculate now / lockExpiredBefore / lockOwner
-  -> query due actions
+calculate now / lockExpiredBefore / runningExpiredBefore
+  -> recover timed-out RUNNING actions
+  -> query due SCHEDULED / RETRY_WAITING actions
   -> try to lock each action
   -> load the owning plan
   -> execute only the locked action
@@ -67,7 +68,7 @@ calculate now / lockExpiredBefore / lockOwner
   -> release the lock if nothing changed
 ```
 
-The current lock timeout is 10 minutes.
+The current scheduler lock timeout is 10 minutes. The current running execution timeout is 30 minutes.
 
 ### 5. Incremental action persistence
 
@@ -98,7 +99,7 @@ canExecuteAction / requireExecutableAction
 resolvePlanStatus
 ```
 
-`AiTaskService` now routes edit, confirm, cancel, retry, dispatch, and plan-status resolution through the state machine. `TaskExecutionService` validates confirmation and execution through the same service.
+`AiTaskService` now routes edit, confirm, cancel, retry, dispatch, timeout recovery, and plan-status resolution through the state machine. `TaskExecutionService` validates confirmation and execution through the same service.
 
 ### 7. Retry and timeout status groundwork
 
@@ -130,12 +131,13 @@ The state machine understands these statuses:
 ```text
 markActionRunning(action, note)
 markActionResult(action)
+markActionTimeout(action, timeoutAt)
 updateActionStatus(actionId, status, executionNote, schedule, releaseLock)
 ```
 
 `TaskExecutionService.executeNow()` now persists a visible `RUNNING` state before invoking the skill executor, then persists the final result state after execution. Unexpected runtime exceptions are converted to `FAILED`, persisted, and logged.
 
-This reduces the need to rely only on aggregate `save(plan)` for execution state changes.
+Entering `RUNNING` writes `lockedBy=runtime-executor` and a fresh `lockedAt`, so timeout recovery uses the actual execution start time.
 
 ### 9. Retry backoff scheduling
 
@@ -163,12 +165,20 @@ max: 30 minutes
 
 `RETRY_WAITING` actions are picked up by the same due-action query and lock path as normal scheduled actions.
 
+### 10. Running timeout recovery
+
+`AiTaskService.dispatchDueOnceTasks()` now runs timeout recovery before normal due-action dispatch.
+
+`TaskPlanRepository.findTimedOutRunningActions()` selects actions stuck in `RUNNING` whose `lockedAt` is missing or older than the configured running timeout. Each recovered action is passed through `markActionTimeout()`, which turns it into `TIMEOUT` and then reuses the same retry-backoff logic as normal failures.
+
+This means a worker crash during execution no longer leaves an action permanently stuck in `RUNNING`.
+
 ## Still pending
 
-1. Add automated tests for lock acquisition, lock expiry, recurring task advancement, same-plan concurrent actions, action-level status updates, state rules, and retry backoff.
+1. Add automated tests for lock acquisition, lock expiry, recurring task advancement, same-plan concurrent actions, action-level status updates, state rules, retry backoff, and running timeout recovery.
 2. Add a composite index for `status + next_fire_time + locked_at`.
 3. Split plan persistence further into clearer `savePlan`, `saveAction`, and query/update ports.
-4. Add timeout detection for actions stuck in `RUNNING` beyond a configured threshold.
+4. Make scheduler lock timeout, running timeout, batch size, retry backoff, and max retry count externally configurable.
 5. Add UI/API fields that expose `attemptCount`, `maxRetryCount`, `lastError`, and `nextFireTime` to the frontend.
 
 ## Acceptance checks
@@ -185,3 +195,4 @@ max: 30 minutes
 10. Immediate execution, manual retry, and scheduled dispatch all persist `RUNNING` before the final action result.
 11. Failed actions with retries remaining move to `RETRY_WAITING` with a future `nextFireTime`.
 12. Due `RETRY_WAITING` actions are scanned, locked, and executed by the same scheduler path.
+13. Stale `RUNNING` actions are converted to `TIMEOUT` and then either retried or finalized based on retry limits.
