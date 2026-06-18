@@ -12,12 +12,18 @@ import java.time.Duration;
 @Component
 public class TaskDispatchMetrics {
 
+    public static final String RESULT_SUCCEEDED = "succeeded";
+    public static final String RESULT_FAILED = "failed";
+    public static final String RESULT_UNKNOWN = "unknown";
+
     private final Counter startedCounter;
     private final Counter succeededCounter;
     private final Counter failedCounter;
     private final Counter retryStartedCounter;
     private final Counter timeoutRecoveredCounter;
-    private final Timer executionDurationTimer;
+    private final Timer succeededExecutionDurationTimer;
+    private final Timer failedExecutionDurationTimer;
+    private final Timer unknownExecutionDurationTimer;
 
     public TaskDispatchMetrics(MeterRegistry registry, TaskDispatchRecordRepository dispatchRecordRepository) {
         this.startedCounter = Counter.builder("task_dispatch_started_total")
@@ -35,9 +41,9 @@ public class TaskDispatchMetrics {
         this.timeoutRecoveredCounter = Counter.builder("task_dispatch_timeout_recovered_total")
                 .description("Total number of timed-out RUNNING dispatch records recovered")
                 .register(registry);
-        this.executionDurationTimer = Timer.builder("task_dispatch_execution_duration")
-                .description("Dispatch execution duration from RUNNING start to terminal update")
-                .register(registry);
+        this.succeededExecutionDurationTimer = executionDurationTimer(registry, RESULT_SUCCEEDED);
+        this.failedExecutionDurationTimer = executionDurationTimer(registry, RESULT_FAILED);
+        this.unknownExecutionDurationTimer = executionDurationTimer(registry, RESULT_UNKNOWN);
 
         Gauge.builder("task_dispatch_running_current", dispatchRecordRepository, TaskDispatchRecordRepository::countRunningRecords)
                 .description("Current number of RUNNING dispatch records")
@@ -50,6 +56,13 @@ public class TaskDispatchMetrics {
                 .register(registry);
         Gauge.builder("task_dispatch_retry_exhausted_current", dispatchRecordRepository, TaskDispatchRecordRepository::countRetryExhaustedRecords)
                 .description("Current number of FAILED dispatch records that exhausted retry attempts")
+                .register(registry);
+    }
+
+    private Timer executionDurationTimer(MeterRegistry registry, String result) {
+        return Timer.builder("task_dispatch_execution_duration")
+                .description("Dispatch execution duration from RUNNING start to terminal update")
+                .tag("result", result)
                 .register(registry);
     }
 
@@ -81,9 +94,20 @@ public class TaskDispatchMetrics {
         }
     }
 
-    public void recordExecutionDurationNanos(long durationNanos) {
-        if (durationNanos >= 0) {
-            executionDurationTimer.record(Duration.ofNanos(durationNanos));
+    public void recordExecutionDurationNanos(String result, long durationNanos) {
+        if (durationNanos < 0) {
+            return;
         }
+        timerByResult(result).record(Duration.ofNanos(durationNanos));
+    }
+
+    private Timer timerByResult(String result) {
+        if (RESULT_SUCCEEDED.equals(result)) {
+            return succeededExecutionDurationTimer;
+        }
+        if (RESULT_FAILED.equals(result)) {
+            return failedExecutionDurationTimer;
+        }
+        return unknownExecutionDurationTimer;
     }
 }
