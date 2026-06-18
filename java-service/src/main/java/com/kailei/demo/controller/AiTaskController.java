@@ -9,6 +9,7 @@ import com.kailei.demo.model.PreviewTaskRequest;
 import com.kailei.demo.model.RetryTaskRequest;
 import com.kailei.demo.model.SessionState;
 import com.kailei.demo.model.TaskPlan;
+import com.kailei.demo.model.TaskPlanPageResponse;
 import com.kailei.demo.repository.TaskExecutionLogRepository;
 import com.kailei.demo.service.AiTaskService;
 import jakarta.validation.Valid;
@@ -69,6 +70,15 @@ public class AiTaskController {
                                            @RequestBody(required = false) RetryTaskRequest request) {
         String operatorUserId = request == null ? null : request.operatorUserId();
         return aiTaskService.retryAction(planId, actionId, operatorUserId);
+    }
+
+    @GetMapping("/page")
+    public TaskPlanPageResponse page(@RequestParam(required = false) String userId,
+                                     @RequestParam(required = false) String status,
+                                     @RequestParam(required = false) String sessionId,
+                                     @RequestParam(required = false) Integer pageNo,
+                                     @RequestParam(required = false) Integer pageSize) {
+        return aiTaskService.page(userId, status, sessionId, pageNo, pageSize);
     }
 
     @GetMapping("/{planId}")
