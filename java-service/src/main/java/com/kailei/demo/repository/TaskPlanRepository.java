@@ -10,6 +10,7 @@ import com.kailei.demo.mapper.TaskActionMapper;
 import com.kailei.demo.mapper.TaskPlanMapper;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
+import com.kailei.demo.model.TaskPlanPageResponse;
 import com.kailei.demo.model.TaskSchedule;
 import com.kailei.demo.model.TaskStatus;
 import com.kailei.demo.model.TaskTarget;
@@ -23,6 +24,8 @@ import java.util.Optional;
 
 @Repository
 public class TaskPlanRepository {
+
+    private static final int MAX_PAGE_SIZE = 100;
 
     private final TaskPlanMapper taskPlanMapper;
     private final TaskActionMapper taskActionMapper;
@@ -66,6 +69,20 @@ public class TaskPlanRepository {
                 .toList();
     }
 
+    public TaskPlanPageResponse findPage(String userId, String status, String sessionId, Integer pageNo, Integer pageSize) {
+        int safePageNo = sanitizePageNo(pageNo);
+        int safePageSize = sanitizePageSize(pageSize);
+        long total = taskPlanMapper.selectCount(buildPlanQuery(userId, status, sessionId));
+        long offset = (long) (safePageNo - 1) * safePageSize;
+        List<TaskPlan> records = taskPlanMapper.selectList(buildPlanQuery(userId, status, sessionId)
+                        .orderByDesc(TaskPlanEntity::getCreatedAt)
+                        .last("limit " + safePageSize + " offset " + offset))
+                .stream()
+                .map(planEntity -> toDomain(planEntity, findActions(planEntity.getPlanId())))
+                .toList();
+        return new TaskPlanPageResponse(safePageNo, safePageSize, total, records);
+    }
+
     public List<TaskPlan> findByUserId(String userId) {
         return taskPlanMapper.selectList(new LambdaQueryWrapper<TaskPlanEntity>()
                         .eq(TaskPlanEntity::getUserId, userId)
@@ -86,6 +103,31 @@ public class TaskPlanRepository {
                 .stream()
                 .map(planEntity -> toDomain(planEntity, findActions(planEntity.getPlanId())))
                 .toList();
+    }
+
+    private LambdaQueryWrapper<TaskPlanEntity> buildPlanQuery(String userId, String status, String sessionId) {
+        LambdaQueryWrapper<TaskPlanEntity> wrapper = new LambdaQueryWrapper<>();
+        if (userId != null && !userId.isBlank()) {
+            wrapper.eq(TaskPlanEntity::getUserId, userId);
+        }
+        if (status != null && !status.isBlank()) {
+            wrapper.eq(TaskPlanEntity::getStatus, status.trim().toUpperCase());
+        }
+        if (sessionId != null && !sessionId.isBlank()) {
+            wrapper.eq(TaskPlanEntity::getSessionId, sessionId);
+        }
+        return wrapper;
+    }
+
+    private int sanitizePageNo(Integer pageNo) {
+        return pageNo == null || pageNo < 1 ? 1 : pageNo;
+    }
+
+    private int sanitizePageSize(Integer pageSize) {
+        if (pageSize == null || pageSize < 1) {
+            return 20;
+        }
+        return Math.min(pageSize, MAX_PAGE_SIZE);
     }
 
     private List<TaskActionEntity> findActions(String planId) {
