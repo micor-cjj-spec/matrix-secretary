@@ -63,17 +63,17 @@ public class TaskExecutionService {
 
         try {
             SkillDefinition skill = skillCatalog.getOrUnknown(action.actionType());
-            TaskAction next = genericSkillExecutor.execute(planId, userId, skill, running);
-            taskPlanRepository.markActionResult(next);
-            executionLogRepository.logStateChange(planId, running, next, operatorUserId);
-            return next;
+            TaskAction executed = genericSkillExecutor.execute(planId, userId, skill, running);
+            TaskAction stored = taskPlanRepository.markActionResult(executed);
+            executionLogRepository.logStateChange(planId, running, stored, operatorUserId);
+            return stored;
         } catch (RuntimeException ex) {
             log.warn("Task action [{}] execution failed unexpectedly", action.actionId(), ex);
             TaskAction failed = running.withStatus(TaskStatus.FAILED,
                     "Task execution failed: " + ex.getClass().getSimpleName());
-            taskPlanRepository.markActionResult(failed);
-            executionLogRepository.logStateChange(planId, running, failed, operatorUserId);
-            return failed;
+            TaskAction stored = taskPlanRepository.markActionResult(failed);
+            executionLogRepository.logStateChange(planId, running, stored, operatorUserId);
+            return stored;
         }
     }
 
