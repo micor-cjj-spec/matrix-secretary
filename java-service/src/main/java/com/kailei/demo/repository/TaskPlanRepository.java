@@ -18,9 +18,11 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @Repository
 public class TaskPlanRepository {
@@ -45,11 +47,7 @@ public class TaskPlanRepository {
         if (taskPlanMapper.updateById(planEntity) == 0) {
             taskPlanMapper.insert(planEntity);
         }
-        taskActionMapper.delete(new LambdaQueryWrapper<TaskActionEntity>()
-                .eq(TaskActionEntity::getPlanId, plan.planId()));
-        for (int i = 0; i < plan.tasks().size(); i++) {
-            taskActionMapper.insert(toActionEntity(plan.planId(), plan.tasks().get(i), i));
-        }
+        syncActions(plan);
         return plan;
     }
 
@@ -103,6 +101,27 @@ public class TaskPlanRepository {
                 .stream()
                 .map(planEntity -> toDomain(planEntity, findActions(planEntity.getPlanId())))
                 .toList();
+    }
+
+    private void syncActions(TaskPlan plan) {
+        Set<String> currentActionIds = new LinkedHashSet<>();
+        for (int i = 0; i < plan.tasks().size(); i++) {
+            TaskActionEntity actionEntity = toActionEntity(plan.planId(), plan.tasks().get(i), i);
+            currentActionIds.add(actionEntity.getActionId());
+            if (taskActionMapper.updateById(actionEntity) == 0) {
+                taskActionMapper.insert(actionEntity);
+            }
+        }
+        pruneRemovedActions(plan.planId(), currentActionIds);
+    }
+
+    private void pruneRemovedActions(String planId, Set<String> currentActionIds) {
+        LambdaQueryWrapper<TaskActionEntity> wrapper = new LambdaQueryWrapper<TaskActionEntity>()
+                .eq(TaskActionEntity::getPlanId, planId);
+        if (!currentActionIds.isEmpty()) {
+            wrapper.notIn(TaskActionEntity::getActionId, currentActionIds);
+        }
+        taskActionMapper.delete(wrapper);
     }
 
     private LambdaQueryWrapper<TaskPlanEntity> buildPlanQuery(String userId, String status, String sessionId) {
