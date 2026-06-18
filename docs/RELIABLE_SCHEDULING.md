@@ -123,15 +123,27 @@ The state machine understands these statuses:
 - `attemptCount` increments for recurring scheduled actions when `nextFireTime` advances.
 - `lastError` is populated for `FAILED` and `TIMEOUT` actions.
 
-This is groundwork; retry backoff scheduling is not implemented yet.
+### 8. Action-level status update methods
+
+`TaskPlanRepository` now exposes action-level status update methods:
+
+```text
+markActionRunning(action, note)
+markActionResult(action)
+updateActionStatus(actionId, status, executionNote, schedule, releaseLock)
+```
+
+`TaskExecutionService.executeNow()` now persists a visible `RUNNING` state before invoking the skill executor, then persists the final result state after execution. Unexpected runtime exceptions are converted to `FAILED`, persisted, and logged.
+
+This reduces the need to rely only on aggregate `save(plan)` for execution state changes.
 
 ## Still pending
 
-1. Persist a visible `RUNNING` transition before executing long-running skills.
-2. Connect `attemptCount` to `maxRetryCount` and retry backoff.
-3. Add automated tests for lock acquisition, lock expiry, recurring task advancement, same-plan concurrent actions, and status rules.
+1. Connect `attemptCount` to `maxRetryCount` and retry backoff.
+2. Add a retry scheduler for `RETRY_WAITING` actions.
+3. Add automated tests for lock acquisition, lock expiry, recurring task advancement, same-plan concurrent actions, action-level status updates, and state rules.
 4. Add a composite index for `status + next_fire_time + locked_at`.
-5. Split action persistence further into clearer `savePlan`, `saveAction`, and `updateActionStatus` methods.
+5. Split plan persistence further into clearer `savePlan`, `saveAction`, and query/update ports.
 
 ## Acceptance checks
 
@@ -144,3 +156,4 @@ This is groundwork; retry backoff scheduling is not implemented yet.
 7. Non-confirmable actions cannot be confirmed, and non-failed/non-timeout actions cannot be retried.
 8. `FAILED` and `TIMEOUT` actions populate `lastError`.
 9. Successful, failed, timed-out, and advanced recurring executions increment `attemptCount`.
+10. Immediate execution, manual retry, and scheduled dispatch all persist `RUNNING` before the final action result.
