@@ -41,6 +41,17 @@ public class TaskExecutionLogRepository {
                     Map<String, Object> requestPayload,
                     Map<String, Object> responsePayload,
                     String errorMessage) {
+        log(planId, null, before, after, operatorUserId, requestPayload, responsePayload, errorMessage);
+    }
+
+    public void log(String planId,
+                    String traceId,
+                    TaskAction before,
+                    TaskAction after,
+                    String operatorUserId,
+                    Map<String, Object> requestPayload,
+                    Map<String, Object> responsePayload,
+                    String errorMessage) {
         TaskExecutionLogEntity entity = new TaskExecutionLogEntity();
         entity.setId("elog-" + UUID.randomUUID().toString().substring(0, 12));
         entity.setPlanId(planId);
@@ -56,12 +67,16 @@ public class TaskExecutionLogRepository {
         entity.setErrorMessage(limit(errorMessage, 1024));
         entity.setOperatorUserId(operatorUserId);
         entity.setOperatorType(resolveOperatorType(operatorUserId));
-        entity.setTraceId(null);
+        entity.setTraceId(traceId);
         entity.setCreatedAt(OffsetDateTime.now());
         mapper.insert(entity);
     }
 
     public void logStateChange(String planId, TaskAction before, TaskAction after, String operatorUserId) {
+        logStateChange(planId, null, before, after, operatorUserId);
+    }
+
+    public void logStateChange(String planId, String traceId, TaskAction before, TaskAction after, String operatorUserId) {
         Map<String, Object> requestPayload = new LinkedHashMap<>();
         requestPayload.put("actionId", before.actionId());
         requestPayload.put("status", before.status().name());
@@ -76,6 +91,7 @@ public class TaskExecutionLogRepository {
 
         log(
                 planId,
+                traceId,
                 before,
                 after,
                 operatorUserId,
