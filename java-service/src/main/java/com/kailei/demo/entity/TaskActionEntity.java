@@ -92,6 +92,32 @@ public class TaskActionEntity {
     @ColumnComment("触发次数")
     private Integer triggerCount;
 
+    @ColumnComment("当前重试次数")
+    private Integer retryCount;
+
+    @ColumnComment("最大重试次数")
+    private Integer maxRetryCount;
+
+    @Index
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 128)
+    @ColumnComment("幂等键")
+    private String idempotencyKey;
+
+    @Index
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 64)
+    @ColumnComment("锁持有者")
+    private String lockedBy;
+
+    @ColumnComment("锁定时间")
+    private OffsetDateTime lockedAt;
+
+    @ColumnComment("锁过期时间")
+    private OffsetDateTime lockExpireAt;
+
+    @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 1024)
+    @ColumnComment("最后一次错误")
+    private String lastError;
+
     @ColumnType(value = MysqlTypeConstant.VARCHAR, length = 512)
     @ColumnComment("执行说明")
     private String executionNote;
@@ -137,6 +163,20 @@ public class TaskActionEntity {
     public void setLastRunAt(OffsetDateTime lastRunAt) { this.lastRunAt = lastRunAt; }
     public Integer getTriggerCount() { return triggerCount; }
     public void setTriggerCount(Integer triggerCount) { this.triggerCount = triggerCount; }
+    public Integer getRetryCount() { return retryCount; }
+    public void setRetryCount(Integer retryCount) { this.retryCount = retryCount; }
+    public Integer getMaxRetryCount() { return maxRetryCount; }
+    public void setMaxRetryCount(Integer maxRetryCount) { this.maxRetryCount = maxRetryCount; }
+    public String getIdempotencyKey() { return idempotencyKey; }
+    public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
+    public String getLockedBy() { return lockedBy; }
+    public void setLockedBy(String lockedBy) { this.lockedBy = lockedBy; }
+    public OffsetDateTime getLockedAt() { return lockedAt; }
+    public void setLockedAt(OffsetDateTime lockedAt) { this.lockedAt = lockedAt; }
+    public OffsetDateTime getLockExpireAt() { return lockExpireAt; }
+    public void setLockExpireAt(OffsetDateTime lockExpireAt) { this.lockExpireAt = lockExpireAt; }
+    public String getLastError() { return lastError; }
+    public void setLastError(String lastError) { this.lastError = lastError; }
     public String getExecutionNote() { return executionNote; }
     public void setExecutionNote(String executionNote) { this.executionNote = executionNote; }
     public Integer getSortOrder() { return sortOrder; }
