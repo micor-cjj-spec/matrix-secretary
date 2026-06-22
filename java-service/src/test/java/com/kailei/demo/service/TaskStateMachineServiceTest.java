@@ -1,5 +1,6 @@
 package com.kailei.demo.service;
 
+import com.kailei.demo.exception.ApiErrorCode;
 import com.kailei.demo.exception.BusinessException;
 import com.kailei.demo.model.TaskAction;
 import com.kailei.demo.model.TaskPlan;
@@ -12,114 +13,105 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TaskStateMachineServiceTest {
 
-    private final TaskStateMachineService service = new TaskStateMachineService();
+    private final TaskStateMachineService stateMachineService = new TaskStateMachineService();
 
     @Test
-    void canEditWhenPlanAndActionAreWaitingConfirm() {
-        TaskAction action = action(TaskStatus.WAITING_CONFIRM);
+    void waitingConfirmPlanAndActionCanBeEdited() {
+        TaskAction action = action(TaskStatus.WAITING_CONFIRM, null);
         TaskPlan plan = plan(TaskStatus.WAITING_CONFIRM, action);
 
-        assertTrue(service.canEdit(plan, action));
-        assertDoesNotThrow(() -> service.ensureEditable(plan, action));
+        assertThat(stateMachineService.canEdit(plan, action)).isTrue();
+        stateMachineService.ensureEditable(plan, action);
     }
 
     @Test
-    void cannotEditWhenPlanIsNotWaitingConfirm() {
-        TaskAction action = action(TaskStatus.WAITING_CONFIRM);
+    void nonWaitingConfirmPlanCannotBeEdited() {
+        TaskAction action = action(TaskStatus.WAITING_CONFIRM, null);
         TaskPlan plan = plan(TaskStatus.SCHEDULED, action);
 
-        assertFalse(service.canEdit(plan, action));
-        assertThrows(BusinessException.class, () -> service.ensureEditable(plan, action));
+        assertThat(stateMachineService.canEdit(plan, action)).isFalse();
+        assertThatThrownBy(() -> stateMachineService.ensureEditable(plan, action))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo(ApiErrorCode.TASK_STATE_INVALID);
+                    assertThat(ex.details()).containsEntry("currentStatus", TaskStatus.SCHEDULED.name());
+                });
     }
 
     @Test
-    void cannotEditWhenActionIsNotWaitingConfirm() {
-        TaskAction action = action(TaskStatus.SCHEDULED);
+    void nonWaitingConfirmActionCannotBeEdited() {
+        TaskAction action = action(TaskStatus.SCHEDULED, scheduledOnce());
         TaskPlan plan = plan(TaskStatus.WAITING_CONFIRM, action);
 
-        assertFalse(service.canEdit(plan, action));
-        assertThrows(BusinessException.class, () -> service.ensureEditable(plan, action));
+        assertThat(stateMachineService.canEdit(plan, action)).isFalse();
+        assertThatThrownBy(() -> stateMachineService.ensureEditable(plan, action))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo(ApiErrorCode.TASK_STATE_INVALID);
+                    assertThat(ex.details()).containsEntry("currentStatus", TaskStatus.SCHEDULED.name());
+                    assertThat(ex.details()).containsEntry("actionId", action.actionId());
+                });
     }
 
     @Test
-    void canConfirmOnlyWaitingConfirmPlan() {
-        assertTrue(service.canConfirm(plan(TaskStatus.WAITING_CONFIRM, action(TaskStatus.WAITING_CONFIRM))));
-        assertFalse(service.canConfirm(plan(TaskStatus.SCHEDULED, action(TaskStatus.SCHEDULED))));
+    void planWithExecutedActionCannotBeCancelled() {
+        TaskAction executedAction = action(TaskStatus.EXECUTED, null);
+        TaskPlan plan = plan(TaskStatus.CONFIRMED, executedAction);
+
+        assertThat(stateMachineService.canCancel(plan)).isFalse();
+        assertThatThrownBy(() -> stateMachineService.ensureCancelable(plan))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo(ApiErrorCode.TASK_STATE_INVALID);
+                    assertThat(ex.details()).containsEntry("currentStatus", TaskStatus.EXECUTED.name());
+                });
     }
 
     @Test
-    void canCancelWhenNoActionExecuted() {
-        TaskPlan plan = plan(TaskStatus.SCHEDULED, action(TaskStatus.SCHEDULED));
+    void onlyFailedActionCanBeRetried() {
+        TaskAction failedAction = action(TaskStatus.FAILED, null);
+        TaskAction executedAction = action(TaskStatus.EXECUTED, null);
 
-        assertTrue(service.canCancel(plan));
-        assertDoesNotThrow(() -> service.ensureCancelable(plan));
+        assertThat(stateMachineService.canRetry(failedAction)).isTrue();
+        stateMachineService.ensureRetryable(failedAction);
+
+        assertThat(stateMachineService.canRetry(executedAction)).isFalse();
+        assertThatThrownBy(() -> stateMachineService.ensureRetryable(executedAction))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo(ApiErrorCode.TASK_STATE_INVALID);
+                    assertThat(ex.details()).containsEntry("currentStatus", TaskStatus.EXECUTED.name());
+                    assertThat(ex.details()).containsEntry("actionId", executedAction.actionId());
+                });
     }
 
     @Test
-    void cannotCancelWhenAnyActionExecuted() {
-        TaskPlan plan = plan(TaskStatus.EXECUTED, action(TaskStatus.EXECUTED));
+    void waitingConfirmScheduledActionCanEnterScheduleQueue() {
+        TaskAction action = action(TaskStatus.WAITING_CONFIRM, scheduledOnce());
 
-        assertFalse(service.canCancel(plan));
-        assertThrows(BusinessException.class, () -> service.ensureCancelable(plan));
+        assertThat(stateMachineService.canSchedule(action)).isTrue();
     }
 
     @Test
-    void canRetryOnlyFailedAction() {
-        TaskAction failedAction = action(TaskStatus.FAILED);
-        TaskAction scheduledAction = action(TaskStatus.SCHEDULED);
+    void confirmedActionCannotExecuteAgain() {
+        TaskAction action = action(TaskStatus.CONFIRMED, null);
 
-        assertTrue(service.canRetry(failedAction));
-        assertDoesNotThrow(() -> service.ensureRetryable(failedAction));
-        assertFalse(service.canRetry(scheduledAction));
-        assertThrows(BusinessException.class, () -> service.ensureRetryable(scheduledAction));
+        assertThat(stateMachineService.canExecute(action)).isFalse();
+        assertThatThrownBy(() -> stateMachineService.ensureExecutable(action))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo(ApiErrorCode.TASK_STATE_INVALID);
+                    assertThat(ex.details()).containsEntry("currentStatus", TaskStatus.CONFIRMED.name());
+                });
     }
 
-    @Test
-    void canScheduleWaitingConfirmScheduledAction() {
-        TaskAction action = action(TaskStatus.WAITING_CONFIRM, new TaskSchedule(
-                "once",
-                "明天下午三点",
-                "2026-06-19T15:00:00+08:00",
-                "0 0 15 19 6 ? 2026",
-                "Asia/Shanghai",
-                "2026-06-19T15:00:00+08:00",
-                null,
-                0
-        ));
-
-        assertTrue(service.canSchedule(action));
-    }
-
-    @Test
-    void cannotScheduleActionWithoutSchedule() {
-        TaskAction action = action(TaskStatus.WAITING_CONFIRM, null);
-
-        assertFalse(service.canSchedule(action));
-    }
-
-    @Test
-    void canExecuteWaitingScheduledOrFailedAction() {
-        assertTrue(service.canExecute(action(TaskStatus.WAITING_CONFIRM)));
-        assertTrue(service.canExecute(action(TaskStatus.SCHEDULED)));
-        assertTrue(service.canExecute(action(TaskStatus.FAILED)));
-        assertFalse(service.canExecute(action(TaskStatus.CANCELLED)));
-        assertFalse(service.canExecute(action(TaskStatus.EXECUTED)));
-    }
-
-    private TaskPlan plan(TaskStatus status, TaskAction... actions) {
-        OffsetDateTime now = OffsetDateTime.now();
+    private static TaskPlan plan(TaskStatus status, TaskAction... actions) {
+        OffsetDateTime now = OffsetDateTime.parse("2026-06-22T10:00:00+08:00");
         return new TaskPlan(
                 "plan-test",
                 "trace-test",
                 "session-test",
-                "测试输入",
+                "测试任务",
                 "demo-user",
                 status,
                 List.of(actions),
@@ -129,28 +121,37 @@ class TaskStateMachineServiceTest {
         );
     }
 
-    private TaskAction action(TaskStatus status) {
-        return action(status, new TaskSchedule("none", null, null, null, "Asia/Shanghai", null, null, 0));
-    }
-
-    private TaskAction action(TaskStatus status, TaskSchedule schedule) {
+    private static TaskAction action(TaskStatus status, TaskSchedule schedule) {
         return new TaskAction(
-                "action-test-" + status.name().toLowerCase(),
+                "action-" + status.name().toLowerCase(),
                 "reminder",
                 "reminder",
-                "测试任务",
-                "测试内容",
-                new TaskTarget("self", "我", null),
+                "提醒事项",
+                "确认合同盖章",
+                new TaskTarget("user", "李雷", null),
                 schedule,
                 Map.of(),
                 "normal",
-                "MEDIUM",
+                "LOW",
                 0.9,
                 false,
-                "测试输入",
+                "明天下午三点提醒我给李雷确认合同盖章",
                 "测试解析备注",
                 status,
-                "测试状态说明"
+                "测试执行说明"
+        );
+    }
+
+    private static TaskSchedule scheduledOnce() {
+        return new TaskSchedule(
+                "once",
+                "明天下午三点",
+                "2026-06-23T15:00:00+08:00",
+                "0 0 15 23 6 ? 2026",
+                "Asia/Shanghai",
+                "2026-06-23T15:00:00+08:00",
+                null,
+                0
         );
     }
 }
