@@ -9,90 +9,95 @@ import org.junit.jupiter.api.Test;
 import java.time.OffsetDateTime;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class DispatchRetryPolicyTest {
 
-    private final DispatchRetryPolicy policy = new DispatchRetryPolicy();
+    private final DispatchRetryPolicy retryPolicy = new DispatchRetryPolicy();
 
     @Test
-    void shouldRetryWhenRetryCountIsBelowDefaultLimit() {
-        assertTrue(policy.shouldRetry(null, null));
-        assertTrue(policy.shouldRetry(0, null));
-        assertTrue(policy.shouldRetry(2, null));
-        assertFalse(policy.shouldRetry(3, null));
+    void shouldRetryUsesDefaultMaxRetryCountWhenMissing() {
+        assertThat(retryPolicy.shouldRetry(null, null)).isTrue();
+        assertThat(retryPolicy.shouldRetry(2, null)).isTrue();
+        assertThat(retryPolicy.shouldRetry(3, null)).isFalse();
     }
 
     @Test
-    void shouldRetryWhenRetryCountIsBelowCustomLimit() {
-        assertTrue(policy.shouldRetry(4, 5));
-        assertFalse(policy.shouldRetry(5, 5));
+    void shouldRetryRespectsExplicitMaxRetryCount() {
+        assertThat(retryPolicy.shouldRetry(0, 1)).isTrue();
+        assertThat(retryPolicy.shouldRetry(1, 1)).isFalse();
+        assertThat(retryPolicy.shouldRetry(2, 2)).isFalse();
     }
 
     @Test
-    void retryBackoffUsesExponentialDelayWithCap() {
-        assertEquals(1, policy.retryBackoffMinutes(1));
-        assertEquals(2, policy.retryBackoffMinutes(2));
-        assertEquals(4, policy.retryBackoffMinutes(3));
-        assertEquals(8, policy.retryBackoffMinutes(4));
-        assertEquals(16, policy.retryBackoffMinutes(5));
-        assertEquals(30, policy.retryBackoffMinutes(6));
-        assertEquals(30, policy.retryBackoffMinutes(10));
+    void retryBackoffUsesExponentialBackoffWithUpperBound() {
+        assertThat(retryPolicy.retryBackoffMinutes(1)).isEqualTo(1);
+        assertThat(retryPolicy.retryBackoffMinutes(2)).isEqualTo(2);
+        assertThat(retryPolicy.retryBackoffMinutes(3)).isEqualTo(4);
+        assertThat(retryPolicy.retryBackoffMinutes(6)).isEqualTo(30);
+        assertThat(retryPolicy.retryBackoffMinutes(10)).isEqualTo(30);
     }
 
     @Test
-    void scheduleRetryMovesFailedActionBackToScheduled() {
-        OffsetDateTime now = OffsetDateTime.parse("2026-06-18T12:00:00+08:00");
-        TaskAction failedAction = action(TaskStatus.FAILED, new TaskSchedule(
-                "once",
-                "稍后提醒",
-                "2026-06-18T12:00:00+08:00",
-                null,
-                "Asia/Shanghai",
-                "2026-06-18T12:00:00+08:00",
-                null,
-                0
-        ));
+    void scheduleRetryMovesFailedActionBackToScheduledWithNextRunAt() {
+        OffsetDateTime now = OffsetDateTime.parse("2026-06-22T10:00:00+08:00");
+        TaskAction failedAction = action(TaskStatus.FAILED, scheduledOnce(), "SMTP 连接失败");
 
-        TaskAction retryAction = policy.scheduleRetry(failedAction, 1, now);
+        TaskAction retryAction = retryPolicy.scheduleRetry(failedAction, 1, now);
 
-        assertEquals(TaskStatus.SCHEDULED, retryAction.status());
-        assertEquals("2026-06-18T12:02+08:00", retryAction.schedule().nextRunAt());
-        assertTrue(retryAction.executionNote().contains("第 2 次重试"));
+        assertThat(retryAction.status()).isEqualTo(TaskStatus.SCHEDULED);
+        assertThat(retryAction.schedule().nextRunAt()).isEqualTo("2026-06-22T10:02+08:00");
+        assertThat(retryAction.schedule().cron()).isEqualTo(failedAction.schedule().cron());
+        assertThat(retryAction.executionNote()).contains("第 2 次重试");
+        assertThat(retryAction.executionNote()).contains("SMTP 连接失败");
     }
 
     @Test
-    void scheduleRetryCreatesScheduleWhenMissing() {
-        OffsetDateTime now = OffsetDateTime.parse("2026-06-18T12:00:00+08:00");
-        TaskAction failedAction = action(TaskStatus.FAILED, null);
+    void scheduleRetryCreatesOneTimeScheduleWhenFailedActionHasNoSchedule() {
+        OffsetDateTime now = OffsetDateTime.parse("2026-06-22T10:00:00+08:00");
+        TaskAction failedAction = action(TaskStatus.FAILED, null, "缺少收件人");
 
-        TaskAction retryAction = policy.scheduleRetry(failedAction, 0, now);
+        TaskAction retryAction = retryPolicy.scheduleRetry(failedAction, null, now);
 
-        assertEquals(TaskStatus.SCHEDULED, retryAction.status());
-        assertEquals("once", retryAction.schedule().scheduleType());
-        assertEquals("2026-06-18T12:01+08:00", retryAction.schedule().nextRunAt());
+        assertThat(retryAction.status()).isEqualTo(TaskStatus.SCHEDULED);
+        assertThat(retryAction.schedule().scheduleType()).isEqualTo("once");
+        assertThat(retryAction.schedule().originalText()).isEqualTo("retry");
+        assertThat(retryAction.schedule().runAt()).isEqualTo("2026-06-22T10:01+08:00");
+        assertThat(retryAction.schedule().nextRunAt()).isEqualTo("2026-06-22T10:01+08:00");
+        assertThat(retryAction.executionNote()).contains("第 1 次重试");
     }
 
-    private TaskAction action(TaskStatus status, TaskSchedule schedule) {
+    private static TaskAction action(TaskStatus status, TaskSchedule schedule, String note) {
         return new TaskAction(
                 "action-test",
-                "reminder",
-                "reminder",
-                "测试任务",
-                "测试内容",
-                new TaskTarget("self", "我", null),
+                "send_email",
+                "email",
+                "发送邮件",
+                "请确认合同盖章",
+                new TaskTarget("email", "李雷", "lilei@example.com"),
                 schedule,
                 Map.of(),
                 "normal",
-                "MEDIUM",
-                0.9,
-                false,
-                "测试输入",
+                "HIGH",
+                0.88,
+                true,
+                "给李雷发邮件确认合同盖章",
                 "测试解析备注",
                 status,
-                "测试失败"
+                note
+        );
+    }
+
+    private static TaskSchedule scheduledOnce() {
+        return new TaskSchedule(
+                "once",
+                "明天下午三点",
+                "2026-06-23T15:00:00+08:00",
+                "0 0 15 23 6 ? 2026",
+                "Asia/Shanghai",
+                "2026-06-23T15:00:00+08:00",
+                null,
+                0
         );
     }
 }
