@@ -51,6 +51,11 @@ ai-secretary:
   local-scheduler:
     enabled: ${AI_SECRETARY_LOCAL_SCHEDULER_ENABLED:true}
 
+matrix:
+  base-url: ${MATRIX_BASE_URL:http://127.0.0.1:10003/api}
+  agent-api-key: ${MATRIX_AGENT_API_KEY:}
+  tenant-id: ${MATRIX_TENANT_ID:default}
+
 feishu:
   enabled: ${FEISHU_ENABLED:false}
   client-id: ${FEISHU_CLIENT_ID:}
