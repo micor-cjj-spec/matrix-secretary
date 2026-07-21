@@ -18,6 +18,7 @@ import java.util.Map;
 public class MatrixVoucherSkillExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(MatrixVoucherSkillExecutor.class);
+    private static final int MAX_EXECUTION_NOTE_LENGTH = 500;
 
     private final RestClient restClient;
     private final String matrixBaseUrl;
@@ -79,17 +80,22 @@ public class MatrixVoucherSkillExecutor {
 
             int totalCount = intValue(data.get("totalCount"), 0);
             BigDecimal totalAmount = decimalValue(data.get("totalAmount"));
-            int recordCount = data.get("records") instanceof List<?> records ? records.size() : 0;
+            List<?> records = data.get("records") instanceof List<?> list ? list : List.of();
             String resolvedPeriod = stringValue(data.get("period"), period);
             String warningText = warningText(data.get("warnings"));
+            String recordPreview = recordPreview(records);
 
             String note = "查询完成: 期间=" + resolvedPeriod
                     + ", 待审核凭证=" + totalCount + "张"
                     + ", 总金额=" + totalAmount.toPlainString()
-                    + ", 本页明细=" + recordCount + "条";
+                    + ", 本页明细=" + records.size() + "条";
+            if (!recordPreview.isBlank()) {
+                note += ", 凭证示例=" + recordPreview;
+            }
             if (!warningText.isBlank()) {
                 note += ", 提示=" + warningText;
             }
+            note = limit(note, MAX_EXECUTION_NOTE_LENGTH);
             log.info("Matrix voucher query executed planId={} actionId={} userId={} traceId={} totalCount={}",
                     planId, action.actionId(), userId, traceId, totalCount);
             return action.withStatus(TaskStatus.EXECUTED, note);
@@ -97,7 +103,7 @@ public class MatrixVoucherSkillExecutor {
             log.warn("Matrix voucher query HTTP failure planId={} actionId={} status={}",
                     planId, action.actionId(), ex.getStatusCode(), ex);
             return action.withStatus(TaskStatus.FAILED,
-                    "Matrix 查询失败: HTTP " + ex.getStatusCode().value() + ", " + safeBody(ex.getResponseBodyAsString()));
+                    limit("Matrix 查询失败: HTTP " + ex.getStatusCode().value() + ", " + safeBody(ex.getResponseBodyAsString()), MAX_EXECUTION_NOTE_LENGTH));
         } catch (Exception ex) {
             log.warn("Matrix voucher query failed planId={} actionId={}", planId, action.actionId(), ex);
             return action.withStatus(TaskStatus.FAILED, "Matrix 查询失败: " + ex.getClass().getSimpleName());
@@ -149,6 +155,18 @@ public class MatrixVoucherSkillExecutor {
         }
     }
 
+    private String recordPreview(List<?> records) {
+        return records.stream()
+                .filter(Map.class::isInstance)
+                .map(Map.class::cast)
+                .limit(3)
+                .map(record -> stringValue(record.get("voucherNo"), "未编号")
+                        + "(" + stringValue(record.get("voucherDate"), "无日期")
+                        + ", " + decimalValue(record.get("amount")).toPlainString() + ")")
+                .reduce((left, right) -> left + "；" + right)
+                .orElse("");
+    }
+
     private String warningText(Object value) {
         if (!(value instanceof List<?> warnings)) {
             return "";
@@ -175,6 +193,13 @@ public class MatrixVoucherSkillExecutor {
             return "无响应内容";
         }
         return body.length() <= 300 ? body : body.substring(0, 300);
+    }
+
+    private String limit(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, Math.max(0, maxLength - 3)) + "...";
     }
 
     private static String trimTrailingSlash(String value) {
