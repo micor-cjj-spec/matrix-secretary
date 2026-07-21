@@ -42,14 +42,15 @@ public class MatrixVoucherSkillExecutor {
         String tenantId = valueOrDefault(stringArg(action, "tenantId"), defaultTenantId);
         String traceId = valueOrDefault(stringArg(action, "traceId"), planId + ":" + action.actionId());
 
-        String url = UriComponentsBuilder
+        UriComponentsBuilder urlBuilder = UriComponentsBuilder
                 .fromUriString(matrixBaseUrl + "/voucher/agent/pending-review")
                 .queryParam("period", period)
                 .queryParam("page", page)
-                .queryParam("size", size)
-                .queryParamIfPresent("summaryKeyword", optionalText(summaryKeyword))
-                .build()
-                .toUriString();
+                .queryParam("size", size);
+        if (summaryKeyword != null && !summaryKeyword.isBlank()) {
+            urlBuilder.queryParam("summaryKeyword", summaryKeyword);
+        }
+        String url = urlBuilder.build().toUriString();
 
         try {
             Map<?, ?> response = restClient.get()
@@ -167,10 +168,6 @@ public class MatrixVoucherSkillExecutor {
 
     private String valueOrDefault(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
-    }
-
-    private java.util.Optional<String> optionalText(String value) {
-        return value == null || value.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(value);
     }
 
     private String safeBody(String body) {
