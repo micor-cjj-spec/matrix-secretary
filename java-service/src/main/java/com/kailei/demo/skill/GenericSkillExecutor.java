@@ -31,6 +31,7 @@ public class GenericSkillExecutor {
     private final EmailDraftRepository emailDraftRepository;
     private final EmailSandboxService emailSandboxService;
     private final ChannelMessageExecutor channelMessageExecutor;
+    private final MatrixVoucherSkillExecutor matrixVoucherSkillExecutor;
     private final boolean httpSkillEnabled;
 
     public GenericSkillExecutor(RestClient restClient,
@@ -39,6 +40,7 @@ public class GenericSkillExecutor {
                                 EmailDraftRepository emailDraftRepository,
                                 EmailSandboxService emailSandboxService,
                                 ChannelMessageExecutor channelMessageExecutor,
+                                MatrixVoucherSkillExecutor matrixVoucherSkillExecutor,
                                 @Value("${ai-secretary.http-skill.enabled:false}") boolean httpSkillEnabled) {
         this.restClient = restClient;
         this.renderer = new SkillTemplateRenderer(objectMapper);
@@ -46,6 +48,7 @@ public class GenericSkillExecutor {
         this.emailDraftRepository = emailDraftRepository;
         this.emailSandboxService = emailSandboxService;
         this.channelMessageExecutor = channelMessageExecutor;
+        this.matrixVoucherSkillExecutor = matrixVoucherSkillExecutor;
         this.httpSkillEnabled = httpSkillEnabled;
     }
 
@@ -81,6 +84,7 @@ public class GenericSkillExecutor {
             case "email" -> createEmailDraftAndMaybeSend(planId, userId, action);
             case "message", "reply" -> executeChannelMessage(planId, userId, skill, action);
             case "schedule" -> mockExecuted(skill, action, "模拟创建定时任务: " + action.content());
+            case "matrix-voucher-query" -> matrixVoucherSkillExecutor.execute(planId, userId, action);
             default -> action.withStatus(TaskStatus.FAILED_FINAL, "不支持的 builtin executor: " + executor);
         };
     }
