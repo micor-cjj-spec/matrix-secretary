@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.llm_parser import parse_text_with_llm_with_diagnostics
+from app.month_end_close_parser import try_parse_month_end_close
 from app.parser import parse_text
 from app.postprocess import normalize_parse_response
 from app.schemas import ParseRequest, ParseResponse
@@ -29,6 +30,10 @@ async def index() -> str:
 
 @app.post("/api/v1/semantic/parse", response_model=ParseResponse)
 async def parse_semantic_task(request: ParseRequest) -> ParseResponse:
+    month_end_close = try_parse_month_end_close(request.text, request.timezone, request.trace_id)
+    if month_end_close:
+        return month_end_close
+
     voucher_review = try_parse_voucher_review(request.text, request.timezone, request.trace_id)
     if voucher_review:
         return voucher_review
