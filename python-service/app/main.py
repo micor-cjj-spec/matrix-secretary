@@ -8,6 +8,7 @@ from app.llm_parser import parse_text_with_llm_with_diagnostics
 from app.parser import parse_text
 from app.postprocess import normalize_parse_response
 from app.schemas import ParseRequest, ParseResponse
+from app.voucher_review_parser import try_parse_voucher_review
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -28,6 +29,10 @@ async def index() -> str:
 
 @app.post("/api/v1/semantic/parse", response_model=ParseResponse)
 async def parse_semantic_task(request: ParseRequest) -> ParseResponse:
+    voucher_review = try_parse_voucher_review(request.text, request.timezone, request.trace_id)
+    if voucher_review:
+        return voucher_review
+
     llm_result = await parse_text_with_llm_with_diagnostics(request.text, request.timezone, request.trace_id)
     if llm_result.response and llm_result.response.tasks:
         return safe_normalize_parse_response(llm_result.response, parser_source="llm")
