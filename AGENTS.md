@@ -84,6 +84,31 @@ After changing code:
 3. State any tests that were skipped and why.
 4. Mention risks and rollback notes.
 
+## Cross-Repository Development Skill
+
+When a task affects or coordinates `matrix`, `matrix-web`, and `matrix-secretary`, read and follow:
+
+```text
+.agents/skills/matrix-cross-repo-development/SKILL.md
+```
+
+The project workflow source of truth is:
+
+```text
+docs/CROSS_REPO_DEVELOPMENT_SKILL.md
+```
+
+The cross-repository workflow requires:
+
+1. the exact same branch name in all three repositories;
+2. a separately committed design document before implementation code;
+3. implementation in repository dependency order;
+4. repository-level verification and vertical-flow acceptance;
+5. recorded outcomes, limitations, risks, and rollback notes;
+6. linked pull requests when PR creation is requested.
+
+Do not start cross-repository implementation code before the documentation gate has been satisfied.
+
 ## Required Checks
 
 Use the strongest available checks for the changed area.
