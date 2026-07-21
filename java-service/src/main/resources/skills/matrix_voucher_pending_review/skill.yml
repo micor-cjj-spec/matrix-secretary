@@ -1,0 +1,36 @@
+name: matrix_voucher_pending_review
+displayName: 查询待审核凭证
+description: 查询 Matrix 指定会计期间内状态为 SUBMITTED 的待审核凭证，并返回数量、金额和明细。
+triggerKeywords:
+  - 未审核凭证
+  - 待审核凭证
+  - 凭证审核
+  - 审核待办
+actionType: query_pending_vouchers
+riskLevel: LOW
+requiresConfirmation: false
+inputSchema:
+  type: object
+  required:
+    - period
+  properties:
+    period:
+      type: string
+      description: 会计期间，格式 yyyy-MM
+    page:
+      type: integer
+      description: 页码
+    size:
+      type: integer
+      description: 每页数量，最大 100
+    summaryKeyword:
+      type: string
+      description: 可选的凭证摘要关键字
+execution:
+  type: builtin
+  executor: matrix-voucher-query
+retry:
+  maxRetryCount: 2
+  initialBackoffSeconds: 10
+  maxBackoffSeconds: 60
+  runningTimeoutMinutes: 2
