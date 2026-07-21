@@ -1,0 +1,34 @@
+name: matrix_month_end_close_check
+displayName: Matrix 月结条件检查
+description: 查询指定期间是否满足结账条件，返回就绪度、阻塞项、警告项和处理建议；只读，不执行结账。
+triggerKeywords:
+  - 月结
+  - 结账条件
+  - 是否可以结账
+  - 期末检查
+  - 阻塞项
+actionType: check_month_end_close
+riskLevel: LOW
+requiresConfirmation: false
+inputSchema:
+  type: object
+  required:
+    - period
+  properties:
+    period:
+      type: string
+      description: 会计期间，格式 yyyy-MM
+    forg:
+      type: integer
+      description: 可选业务单元 ID
+    tenantId:
+      type: string
+      description: 租户上下文
+execution:
+  type: builtin
+  executor: matrix-month-end-close-check
+retry:
+  maxRetryCount: 2
+  initialBackoffSeconds: 5
+  maxBackoffSeconds: 30
+  runningTimeoutMinutes: 2
